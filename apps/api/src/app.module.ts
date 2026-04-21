@@ -14,6 +14,7 @@ import { AuditModule } from './modules/audit/audit.module';
 import { RiskControlModule } from './modules/risk-control/risk-control.module';
 import { AdminSessionGuard } from './common/auth/admin-session.guard';
 import { RolesGuard } from './common/auth/roles.guard';
+import { ExternalIntegrationModule } from './modules/external-integration/external-integration.module';
 
 @Module({
   imports: [
@@ -27,6 +28,7 @@ import { RolesGuard } from './common/auth/roles.guard';
     AdminUserModule,
     AuditModule,
     RiskControlModule,
+    ExternalIntegrationModule,
   ],
   controllers: [AppController],
   providers: [

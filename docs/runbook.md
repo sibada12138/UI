@@ -73,3 +73,20 @@ pnpm --filter api test:e2e
 ```bash
 k6 run apps/api/test/load/query-load.k6.js
 ```
+
+## 8. External API Bridge (Admin)
+- `POST /api/admin/external/sms/bootstrap`
+- `POST /api/admin/external/sms/send-code`
+- `POST /api/admin/external/sms/login`
+- `POST /api/admin/external/qr/create`
+- `GET /api/admin/external/qr/status`
+- `POST /api/admin/external/qr/login`
+- `POST /api/admin/external/vip/overview`
+
+Required env (API):
+- `OUTBOUND_PROXY_URL` (optional)
+- `EXTERNAL_SUGGEST_CLIENT_ID`
+- `EXTERNAL_APP_CLIENT_ID`
+- `EXTERNAL_ZIP_VERSION`
+- `EXTERNAL_WEB_VERSION`
+- `EXTERNAL_DEFAULT_DEVICE_ID`

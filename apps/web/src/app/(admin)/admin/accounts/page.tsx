@@ -1,10 +1,8 @@
 "use client";
 /* eslint-disable react-hooks/set-state-in-effect */
-/* eslint-disable react-hooks/exhaustive-deps */
 
 import { FormEvent, useEffect, useState } from "react";
-import { apiRequest } from "@/lib/api";
-import { getAdminToken } from "@/lib/admin-auth";
+import { adminApiRequest } from "@/lib/admin-api";
 import { toErrorMessage } from "@/lib/error-message";
 
 type AccountItem = {
@@ -35,13 +33,11 @@ export default function AccountsPage() {
   const [password, setPassword] = useState("");
   const [role, setRole] = useState<"admin" | "operator_admin">("operator_admin");
 
-  const token = getAdminToken();
-
   async function load() {
     try {
       const [taskData, adminData] = await Promise.all([
-        apiRequest<{ items: AccountItem[] }>("/admin/recharge/tasks", { token }),
-        apiRequest<{ items: AdminUser[] }>("/admin/admin-users", { token }),
+        adminApiRequest<{ items: AccountItem[] }>("/admin/recharge/tasks"),
+        adminApiRequest<{ items: AdminUser[] }>("/admin/admin-users"),
       ]);
       setAccounts(taskData.items);
       setAdmins(adminData.items);
@@ -58,9 +54,8 @@ export default function AccountsPage() {
     event.preventDefault();
     setMessage("");
     try {
-      await apiRequest("/admin/admin-users", {
+      await adminApiRequest("/admin/admin-users", {
         method: "POST",
-        token,
         body: { username, password, role },
       });
       setUsername("");

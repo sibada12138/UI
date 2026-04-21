@@ -1,10 +1,8 @@
 "use client";
 /* eslint-disable react-hooks/set-state-in-effect */
-/* eslint-disable react-hooks/exhaustive-deps */
 
 import { useEffect, useMemo, useState } from "react";
-import { apiRequest } from "@/lib/api";
-import { getAdminToken } from "@/lib/admin-auth";
+import { adminApiRequest } from "@/lib/admin-api";
 import { toErrorMessage } from "@/lib/error-message";
 
 type BanItem = {
@@ -23,7 +21,6 @@ type CdkItem = {
 };
 
 export default function RiskPage() {
-  const token = getAdminToken();
   const [ipBans, setIpBans] = useState<BanItem[]>([]);
   const [cdks, setCdks] = useState<CdkItem[]>([]);
   const [message, setMessage] = useState("");
@@ -36,8 +33,8 @@ export default function RiskPage() {
   async function load() {
     try {
       const [ipData, cdkData] = await Promise.all([
-        apiRequest<{ items: BanItem[] }>("/admin/security/bans", { token }),
-        apiRequest<{ items: CdkItem[] }>("/admin/tokens", { token }),
+        adminApiRequest<{ items: BanItem[] }>("/admin/security/bans"),
+        adminApiRequest<{ items: CdkItem[] }>("/admin/tokens"),
       ]);
       setIpBans(ipData.items);
       setCdks(cdkData.items);
@@ -53,9 +50,8 @@ export default function RiskPage() {
   async function unbanIp(item: BanItem) {
     setMessage("");
     try {
-      await apiRequest("/admin/security/bans/unban", {
+      await adminApiRequest("/admin/security/bans/unban", {
         method: "POST",
-        token,
         body: { scope: item.scope, ip: item.ip },
       });
       await load();
@@ -67,9 +63,8 @@ export default function RiskPage() {
   async function banCdk(id: string) {
     setMessage("");
     try {
-      await apiRequest(`/admin/tokens/${id}/revoke`, {
+      await adminApiRequest(`/admin/tokens/${id}/revoke`, {
         method: "POST",
-        token,
       });
       await load();
     } catch (error) {
@@ -80,9 +75,8 @@ export default function RiskPage() {
   async function unbanCdk(id: string) {
     setMessage("");
     try {
-      await apiRequest(`/admin/tokens/${id}/unban`, {
+      await adminApiRequest(`/admin/tokens/${id}/unban`, {
         method: "POST",
-        token,
       });
       await load();
     } catch (error) {

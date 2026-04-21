@@ -1,10 +1,8 @@
 "use client";
 /* eslint-disable react-hooks/set-state-in-effect */
-/* eslint-disable react-hooks/exhaustive-deps */
 
 import { useEffect, useMemo, useState } from "react";
-import { apiRequest } from "@/lib/api";
-import { getAdminToken } from "@/lib/admin-auth";
+import { adminApiRequest } from "@/lib/admin-api";
 import { toErrorMessage } from "@/lib/error-message";
 
 type TodoTask = {
@@ -23,7 +21,6 @@ type CdkItem = {
 };
 
 export default function TodoPage() {
-  const token = getAdminToken();
   const [tasks, setTasks] = useState<TodoTask[]>([]);
   const [cdks, setCdks] = useState<CdkItem[]>([]);
   const [message, setMessage] = useState("");
@@ -36,8 +33,8 @@ export default function TodoPage() {
   async function load() {
     try {
       const [taskData, cdkData] = await Promise.all([
-        apiRequest<{ items: TodoTask[] }>("/admin/recharge/tasks", { token }),
-        apiRequest<{ items: CdkItem[] }>("/admin/tokens", { token }),
+        adminApiRequest<{ items: TodoTask[] }>("/admin/recharge/tasks"),
+        adminApiRequest<{ items: CdkItem[] }>("/admin/tokens"),
       ]);
       setTasks(taskData.items);
       setCdks(cdkData.items);
@@ -53,9 +50,8 @@ export default function TodoPage() {
   async function createCdk() {
     setMessage("");
     try {
-      await apiRequest("/admin/tokens", {
+      await adminApiRequest("/admin/tokens", {
         method: "POST",
-        token,
         body: { expiresInMinutes: 30 },
       });
       await load();
@@ -67,9 +63,8 @@ export default function TodoPage() {
   async function generateLink(taskId: string) {
     setMessage("");
     try {
-      await apiRequest(`/admin/recharge/tasks/${taskId}/generate-link`, {
+      await adminApiRequest(`/admin/recharge/tasks/${taskId}/generate-link`, {
         method: "POST",
-        token,
       });
       await load();
     } catch (error) {
@@ -80,9 +75,8 @@ export default function TodoPage() {
   async function completeTask(taskId: string) {
     setMessage("");
     try {
-      await apiRequest(`/admin/recharge/tasks/${taskId}/status`, {
+      await adminApiRequest(`/admin/recharge/tasks/${taskId}/status`, {
         method: "POST",
-        token,
         body: { status: "completed", remark: "manual done" },
       });
       await load();

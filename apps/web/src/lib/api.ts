@@ -30,7 +30,7 @@ function resolveApiBase() {
   return base;
 }
 
-type ApiOptions = {
+export type ApiOptions = {
   method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
   body?: unknown;
   token?: string;

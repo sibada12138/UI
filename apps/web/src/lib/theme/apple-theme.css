@@ -5,11 +5,13 @@
   --brand-green-uplift: #2b5148;
   --gold: #cba258;
 
-  --page-bg: #f2f0eb;
+  --page-bg: #f7f5f2;
   --page-text: rgba(0, 0, 0, 0.87);
   --card-bg: #ffffff;
-  --card-bg-soft: #f9f9f9;
+  --card-bg-soft: #f5f6f7;
   --card-border: rgba(0, 0, 0, 0.08);
+  --surface-accent: #f2f0eb;
+  --surface-quiet: #edebe9;
 
   --text-light: #ffffff;
   --text-muted: rgba(0, 0, 0, 0.58);
@@ -26,14 +28,4 @@
     0 0 0.5px rgba(0, 0, 0, 0.14),
     0 1px 1px rgba(0, 0, 0, 0.24);
   --danger: #c82014;
-}
-
-:root[data-theme='dark'] {
-  --page-bg: #1a2f2a;
-  --page-text: #ffffff;
-  --card-bg: #244039;
-  --card-bg-soft: #2b5148;
-  --card-border: rgba(255, 255, 255, 0.18);
-  --text-muted: rgba(255, 255, 255, 0.78);
-  --text-subtle: rgba(255, 255, 255, 0.6);
 }

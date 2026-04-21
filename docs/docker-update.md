@@ -15,9 +15,11 @@ ADMIN_INIT_PASSWORD=admin123
 ADMIN_JWT_SECRET=请替换为长随机字符串
 ```
 
-启动：
+启动（首次不建议一次性全量 build）：
 ```bash
-docker compose -f infra/docker-compose.yml --env-file infra/.env up -d --build
+docker compose -f infra/docker-compose.yml --env-file infra/.env build api --progress=plain
+docker compose -f infra/docker-compose.yml --env-file infra/.env build web --progress=plain
+docker compose -f infra/docker-compose.yml --env-file infra/.env up -d
 ```
 
 访问：
@@ -27,13 +29,15 @@ docker compose -f infra/docker-compose.yml --env-file infra/.env up -d --build
 ```bash
 cd /lishuai/rx
 git pull
-docker compose -f infra/docker-compose.yml --env-file infra/.env up -d --build api web
-docker compose -f infra/docker-compose.yml --env-file infra/.env up -d
+docker compose -f infra/docker-compose.yml --env-file infra/.env build api --progress=plain
+docker compose -f infra/docker-compose.yml --env-file infra/.env up -d api
+docker compose -f infra/docker-compose.yml --env-file infra/.env build web --progress=plain
+docker compose -f infra/docker-compose.yml --env-file infra/.env up -d web
 ```
 
 说明：
-- 第 2 行只重建 `api/web`，避免每次重建 redis。
-- 第 3 行用于应用最新镜像并拉起服务。
+- 按 `api -> web` 拆分，明显降低服务器瞬时负载。
+- `redis` 无改动时不需要重建。
 
 ## 3. 仅改端口时
 只改 `infra/.env` 的 `WEB_PORT` 与 `APP_BASE_URL`，然后执行：
@@ -51,4 +55,15 @@ docker compose -f infra/docker-compose.yml --env-file infra/.env logs -f api web
 ```bash
 docker compose -f infra/docker-compose.yml --env-file infra/.env down -v
 docker compose -f infra/docker-compose.yml --env-file infra/.env up -d --build
+```
+
+## 6. API 对接环境变量（可选）
+在 `infra/.env` 里可调整第三方对接参数：
+```env
+OUTBOUND_PROXY_URL=
+EXTERNAL_SUGGEST_CLIENT_ID=1189857434
+EXTERNAL_APP_CLIENT_ID=1089867636
+EXTERNAL_ZIP_VERSION=2.9.91
+EXTERNAL_WEB_VERSION=2.9.0
+EXTERNAL_DEFAULT_DEVICE_ID=web-default-device
 ```

@@ -4,7 +4,6 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { apiRequest } from "@/lib/api";
 import { toErrorMessage } from "@/lib/error-message";
-import { ThemeToggle } from "@/components/theme-toggle";
 
 type CdkStatusResponse = {
   status: string;
@@ -160,18 +159,17 @@ export default function TokenClientPage({ initialToken = "" }: Props) {
   }
 
   return (
-    <main className="min-h-screen bg-[var(--brand-green-dark)] px-6 py-12 text-white md:px-10">
+    <main className="min-h-screen bg-[var(--surface-accent)] px-4 py-8 text-[var(--page-text)] md:px-10 md:py-12">
       <div className="mx-auto flex max-w-6xl items-start justify-between gap-4">
         <div>
-          <p className="text-sm text-white/70">CDK 用户入口</p>
+          <p className="text-sm text-[var(--text-muted)]">CDK 用户入口</p>
           <h1 className="h-display mt-2 text-4xl font-semibold leading-[1.1] md:text-5xl">
             CDK 登录与进度查询
           </h1>
-          <p className="mt-3 max-w-2xl text-sm text-white/78">
+          <p className="mt-3 max-w-2xl text-sm text-[var(--text-muted)]">
             URL 中 CDK 会自动填充。CDK 为空或无效无法提交；单 IP 连续失败 5 次将被限制 1 小时。
           </p>
         </div>
-        <ThemeToggle />
       </div>
 
       <div className="mx-auto mt-8 grid max-w-6xl gap-6 lg:grid-cols-2">

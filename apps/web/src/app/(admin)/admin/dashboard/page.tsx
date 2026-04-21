@@ -2,8 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { apiRequest } from "@/lib/api";
-import { getAdminToken } from "@/lib/admin-auth";
+import { adminApiRequest } from "@/lib/admin-api";
 import { toErrorMessage } from "@/lib/error-message";
 
 type Metrics = {
@@ -19,8 +18,7 @@ export default function DashboardPage() {
   const [message, setMessage] = useState("");
 
   useEffect(() => {
-    const token = getAdminToken();
-    void apiRequest<Metrics>("/admin/dashboard/metrics", { token })
+    void adminApiRequest<Metrics>("/admin/dashboard/metrics")
       .then(setMetrics)
       .catch((error) => setMessage(toErrorMessage(error, "加载主页数据失败")));
   }, []);
@@ -34,6 +32,15 @@ export default function DashboardPage() {
         { label: "查询失败率", value: `${(metrics.queryFailRate * 100).toFixed(2)}%` },
       ]
     : [];
+  const chartRows = metrics
+    ? [
+        { label: "可用 CDK", value: metrics.activeTokens },
+        { label: "今日提交", value: metrics.consumedToday },
+        { label: "待办任务", value: metrics.pendingRechargeTasks },
+        { label: "封禁 IP", value: metrics.bannedIpCount },
+      ]
+    : [];
+  const chartMax = Math.max(1, ...chartRows.map((item) => item.value));
 
   return (
     <section className="grid gap-5">
@@ -60,6 +67,28 @@ export default function DashboardPage() {
           </article>
         ))}
       </div>
+      <article className="apple-panel p-5">
+        <h2 className="h-display text-xl font-semibold">运行快照图</h2>
+        <p className="mt-1 text-sm text-[var(--text-muted)]">
+          展示当前关键指标占比，便于手机端快速判断是否有堆积风险。
+        </p>
+        <div className="mt-4 grid gap-3">
+          {chartRows.map((item) => (
+            <div key={item.label} className="grid gap-1">
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-[var(--text-muted)]">{item.label}</span>
+                <span className="font-semibold text-[var(--page-text)]">{item.value}</span>
+              </div>
+              <div className="h-2 rounded-full bg-[var(--surface-quiet)]">
+                <div
+                  className="h-full rounded-full bg-[var(--brand-green-accent)] transition-all"
+                  style={{ width: `${Math.max(8, Math.round((item.value / chartMax) * 100))}%` }}
+                />
+              </div>
+            </div>
+          ))}
+        </div>
+      </article>
 
       {message ? <p className="text-sm text-[var(--danger)]">{message}</p> : null}
     </section>
