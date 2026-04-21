@@ -15,6 +15,8 @@ infra/.env
 apps/api/dev.db
 apps/api/dev.db-journal
 apps/api/data/
+apps/api/prisma/dev.db
+apps/api/prisma/dev.db-journal
 
 4.zip
 test2/
