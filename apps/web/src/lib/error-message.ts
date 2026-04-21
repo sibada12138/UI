@@ -8,6 +8,7 @@ const MESSAGE_MAP: Record<string, string> = {
   TOKEN_EXPIRED: "CDK 已过期。",
   TOKEN_REQUIRED: "请先填写 CDK。",
   TOKEN_SUBMIT_BANNED_1H: "提交失败次数过多，已被限制 1 小时。",
+  SMS_WAIT: "发送过于频繁，请稍后再试。",
   TOKEN_ALREADY_CONSUMED: "CDK 已被使用，无法解封。",
   PHONE_INVALID: "手机号格式不正确。",
   SMSCODE_INVALID: "短信验证码格式不正确。",

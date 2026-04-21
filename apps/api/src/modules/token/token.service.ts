@@ -20,6 +20,8 @@ import { RiskControlService } from '../risk-control/risk-control.service';
 
 @Injectable()
 export class TokenService {
+  private readonly smsCooldownMap = new Map<string, number>();
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly riskControlService: RiskControlService,
@@ -36,6 +38,76 @@ export class TokenService {
     if (this.riskControlService.isBanned('token_submit', ip)) {
       throw new ForbiddenException('TOKEN_SUBMIT_BANNED_1H');
     }
+  }
+
+  private getSmsCooldownKey(token: string, phone: string, ip?: string) {
+    return `${token}:${phone}:${ip ?? '127.0.0.1'}`;
+  }
+
+  async sendSmsCode(token: string, phone: string, submitIp?: string) {
+    this.ensureTokenSubmitAllowed(submitIp);
+
+    const normalizedToken = String(token ?? '').trim();
+    if (!/^tk_[a-zA-Z0-9_-]{8,}$/.test(normalizedToken)) {
+      this.registerTokenSubmitFailure(submitIp);
+      throw new BadRequestException('TOKEN_INVALID');
+    }
+    const normalizedPhone = normalizePhone(phone);
+    if (!/^1\d{10}$/.test(normalizedPhone)) {
+      throw new BadRequestException('PHONE_INVALID');
+    }
+
+    const issueToken = await this.prisma.issueToken.findUnique({
+      where: { token: normalizedToken },
+    });
+    if (!issueToken) {
+      this.registerTokenSubmitFailure(submitIp);
+      throw new NotFoundException('TOKEN_NOT_FOUND');
+    }
+    if (issueToken.status !== TokenStatus.active) {
+      this.registerTokenSubmitFailure(submitIp);
+      throw new BadRequestException('TOKEN_INVALID');
+    }
+    if (issueToken.expiresAt.getTime() <= Date.now()) {
+      await this.prisma.issueToken.update({
+        where: { id: issueToken.id },
+        data: { status: TokenStatus.expired },
+      });
+      this.registerTokenSubmitFailure(submitIp);
+      throw new BadRequestException('TOKEN_EXPIRED');
+    }
+
+    const cooldownKey = this.getSmsCooldownKey(
+      normalizedToken,
+      normalizedPhone,
+      submitIp,
+    );
+    const now = Date.now();
+    const nextAllowedAt = this.smsCooldownMap.get(cooldownKey) ?? 0;
+    if (nextAllowedAt > now) {
+      const remainSec = Math.max(1, Math.ceil((nextAllowedAt - now) / 1000));
+      return { success: false, retryAfterSec: remainSec, message: 'SMS_WAIT' };
+    }
+
+    this.smsCooldownMap.set(cooldownKey, now + 60 * 1000);
+    await this.prisma.auditLog.create({
+      data: {
+        actorType: 'user',
+        action: 'TOKEN_SMS_SEND_REQUEST',
+        targetType: 'issue_token',
+        targetId: issueToken.id,
+        metadataJson: {
+          phoneMasked: maskPhone(normalizedPhone),
+        },
+      },
+    });
+    this.riskControlService.resetFailure('token_submit', submitIp);
+
+    return {
+      success: true,
+      retryAfterSec: 60,
+      message: 'SMS_SENT',
+    };
   }
 
   async createToken(dto: CreateTokenDto, createdBy?: string) {

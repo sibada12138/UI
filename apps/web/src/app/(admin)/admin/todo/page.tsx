@@ -100,6 +100,10 @@ export default function TodoPage() {
     }
   }
 
+  function cdkFullLink(token: string) {
+    return buildCdkLink(token);
+  }
+
   async function generateLink(taskId: string) {
     setMessage("");
     try {
@@ -149,6 +153,7 @@ export default function TodoPage() {
               <tr>
                 <th>手机号</th>
                 <th>CDK</th>
+                <th>完整链接</th>
                 <th>状态</th>
                 <th>更新时间</th>
                 <th>操作</th>
@@ -159,11 +164,15 @@ export default function TodoPage() {
                 <tr key={item.id}>
                   <td>{item.phoneMasked}</td>
                   <td className="font-mono">{item.token}</td>
+                  <td className="font-mono text-xs">{cdkFullLink(item.token)}</td>
                   <td>
                     <span className="status-pill">{item.status}</span>
                   </td>
                   <td>{new Date(item.updatedAt).toLocaleString()}</td>
                   <td className="flex gap-2">
+                    <button className="btn-pill" onClick={() => void copyCdkLink(item.token)} type="button">
+                      复制链接
+                    </button>
                     <button className="btn-pill" onClick={() => void generateLink(item.id)} type="button">
                       生成开号链接
                     </button>
@@ -175,7 +184,7 @@ export default function TodoPage() {
               ))}
               {pendingTasks.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="text-[var(--text-muted)]">
+                  <td colSpan={6} className="text-[var(--text-muted)]">
                     当前没有待处理开号任务。
                   </td>
                 </tr>
@@ -192,6 +201,7 @@ export default function TodoPage() {
             <thead>
               <tr>
                 <th>CDK</th>
+                <th>完整链接</th>
                 <th>状态</th>
                 <th>过期时间</th>
                 <th>操作</th>
@@ -201,6 +211,7 @@ export default function TodoPage() {
               {cdks.map((item) => (
                 <tr key={item.id}>
                   <td className="font-mono">{item.token}</td>
+                  <td className="font-mono text-xs">{cdkFullLink(item.token)}</td>
                   <td>{item.status}</td>
                   <td>{new Date(item.expiresAt).toLocaleString()}</td>
                   <td>
