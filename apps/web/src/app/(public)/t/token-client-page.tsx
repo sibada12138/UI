@@ -61,6 +61,15 @@ export default function TokenClientPage({ initialToken = "" }: Props) {
   const [queryLoading, setQueryLoading] = useState(false);
 
   const cdkValid = useMemo(() => isCdkValid(cdk), [cdk]);
+  const currentStep = useMemo(() => {
+    if (panel === "query") {
+      return 3;
+    }
+    if (smsCode.trim()) {
+      return 2;
+    }
+    return 1;
+  }, [panel, smsCode]);
 
   async function loadCdkStatus(nextValue: string) {
     const value = nextValue.trim();
@@ -203,29 +212,58 @@ export default function TokenClientPage({ initialToken = "" }: Props) {
   }
 
   return (
-    <main className="min-h-screen bg-[var(--surface-accent)] px-4 py-8 text-[var(--page-text)] md:px-8 md:py-10">
+    <main className="min-h-screen bg-[linear-gradient(140deg,#eef2f8_0%,#f2f0eb_45%,#e8f2ee_100%)] px-4 py-8 text-[var(--page-text)] md:px-8 md:py-10">
       <div className="mx-auto max-w-5xl">
-        <div className="rounded-[14px] border border-[var(--card-border)] bg-white p-6 shadow-[var(--shadow-card)] md:p-8">
-          <p className="inline-flex rounded-full border border-[var(--card-border)] bg-[var(--surface-quiet)] px-3 py-1 text-xs tracking-[0.08em] text-[var(--text-muted)]">
-            CDK 用户中心
-          </p>
-          <h1 className="h-display mt-4 text-3xl font-semibold leading-[1.15] md:text-5xl">
-            账号登录与开卡进度
-          </h1>
-          <p className="mt-3 max-w-2xl text-sm text-[var(--text-muted)] md:text-base">
-            先通过 CDK + 手机号 + 验证码提交登录信息，再查询开卡进度。URL 中携带的 CDK 会自动填入。
-          </p>
-          <div className="mt-4 grid gap-3 text-sm text-[var(--text-muted)] md:grid-cols-3">
-            <div className="rounded-[10px] border border-[var(--card-border)] bg-[var(--card-bg-soft)] px-3 py-2">
-              1. 填写 CDK 与手机号
+        <div className="overflow-hidden rounded-[18px] border border-white/35 bg-white shadow-[0_20px_55px_rgba(30,57,50,0.12)]">
+          <div className="bg-[linear-gradient(120deg,#1e3932_0%,#00754a_45%,#3f8f7a_100%)] p-6 text-white md:p-8">
+            <p className="inline-flex rounded-full border border-white/30 bg-white/10 px-3 py-1 text-xs tracking-[0.08em] text-white/85">
+              CDK 用户中心
+            </p>
+            <h1 className="h-display mt-4 text-3xl font-semibold leading-[1.15] md:text-5xl">
+              账号登录与开卡进度
+            </h1>
+            <p className="mt-3 max-w-2xl text-sm text-white/85 md:text-base">
+              URL 中带的 CDK 会自动填入。按步骤提交账号信息后，可在查询页实时查看开卡状态。
+            </p>
+          </div>
+          <div className="bg-white p-6 md:p-8">
+            <div className="flex items-center justify-between gap-2">
+              {[1, 2, 3].map((step) => (
+                <div key={step} className="flex flex-1 items-center gap-2">
+                  <div
+                    className={`flex h-10 w-10 items-center justify-center rounded-full border text-sm font-semibold ${
+                      currentStep >= step
+                        ? "border-[var(--brand-green-accent)] bg-[var(--brand-green-accent)] text-white"
+                        : "border-[var(--card-border)] bg-white text-[var(--text-muted)]"
+                    }`}
+                  >
+                    {step}
+                  </div>
+                  {step !== 3 ? (
+                    <div
+                      className={`h-[2px] flex-1 ${
+                        currentStep > step ? "bg-[var(--brand-green-accent)]" : "bg-[var(--card-border)]"
+                      }`}
+                    />
+                  ) : null}
+                </div>
+              ))}
             </div>
-            <div className="rounded-[10px] border border-[var(--card-border)] bg-[var(--card-bg-soft)] px-3 py-2">
-              2. 发送短信并提交
-            </div>
-            <div className="rounded-[10px] border border-[var(--card-border)] bg-[var(--card-bg-soft)] px-3 py-2">
-              3. 查询开卡进度
+            <div className="mt-3 grid grid-cols-3 text-center text-xs text-[var(--text-muted)]">
+              <span>验证 CDK</span>
+              <span>提交账号</span>
+              <span>查询进度</span>
             </div>
           </div>
+        </div>
+
+        <div className="mt-4 rounded-[14px] border border-[var(--card-border)] bg-white p-4 shadow-[var(--shadow-card)]">
+          <p className="text-sm text-[var(--text-muted)]">
+            CDK 用户中心
+            <span className="ml-2 font-medium text-[var(--page-text)]">
+              {panel === "submit" ? "请先完成登录提交" : "请在此查询开卡状态"}
+            </span>
+          </p>
         </div>
       </div>
 
