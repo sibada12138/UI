@@ -10,4 +10,3 @@ export function getOutboundProxyConfig(): OutboundProxyConfig {
   }
   return { enabled: true, proxyUrl };
 }
-

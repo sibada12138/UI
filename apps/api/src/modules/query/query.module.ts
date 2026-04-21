@@ -7,4 +7,3 @@ import { QueryService } from './query.service';
   providers: [QueryService],
 })
 export class QueryModule {}
-

@@ -9,4 +9,3 @@ export class SubmitTokenDto {
   @IsNotEmpty()
   smsCode: string;
 }
-

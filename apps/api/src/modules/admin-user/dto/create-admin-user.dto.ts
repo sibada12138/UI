@@ -13,4 +13,3 @@ export class CreateAdminUserDto {
   @IsIn(['admin', 'operator_admin'])
   role: 'admin' | 'operator_admin';
 }
-

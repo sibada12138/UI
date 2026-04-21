@@ -5,6 +5,7 @@
 import { useEffect, useState } from "react";
 import { apiRequest } from "@/lib/api";
 import { getAdminToken } from "@/lib/admin-auth";
+import { toErrorMessage } from "@/lib/error-message";
 
 type TokenItem = {
   id: string;
@@ -23,7 +24,7 @@ export default function TokensPage() {
       const data = await apiRequest<{ items: TokenItem[] }>("/admin/tokens", { token });
       setItems(data.items);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Load failed");
+      setMessage(toErrorMessage(error, "加载 token 列表失败"));
     }
   }
 
@@ -41,7 +42,7 @@ export default function TokensPage() {
       });
       await load();
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Create failed");
+      setMessage(toErrorMessage(error, "创建 token 失败"));
     }
   }
 
@@ -54,16 +55,21 @@ export default function TokensPage() {
       });
       await load();
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Revoke failed");
+      setMessage(toErrorMessage(error, "禁用 token 失败"));
     }
   }
 
   return (
     <section className="grid gap-6">
       <header className="flex items-center justify-between">
-        <h1 className="h-display text-4xl font-semibold">Token Management</h1>
+        <div>
+          <h1 className="h-display text-4xl font-semibold">Token 发放中心</h1>
+          <p className="mt-2 text-sm text-[var(--text-subtle)]">
+            默认有效期 30 分钟，用户短信提交后立即失效，但后台仍可追溯记录。
+          </p>
+        </div>
         <button className="btn-primary" type="button" onClick={() => void createToken()}>
-          Create 30m Token
+          创建 30 分钟 Token
         </button>
       </header>
 
@@ -72,9 +78,9 @@ export default function TokensPage() {
           <thead className="bg-black text-white">
             <tr>
               <th className="px-4 py-3">Token</th>
-              <th className="px-4 py-3">Status</th>
-              <th className="px-4 py-3">Expires</th>
-              <th className="px-4 py-3">Actions</th>
+              <th className="px-4 py-3">状态</th>
+              <th className="px-4 py-3">到期时间</th>
+              <th className="px-4 py-3">操作</th>
             </tr>
           </thead>
           <tbody>
@@ -93,14 +99,14 @@ export default function TokensPage() {
                       )
                     }
                   >
-                    Copy Link
+                    复制用户链接
                   </button>
                   <button
                     className="btn-pill"
                     type="button"
                     onClick={() => void revokeToken(item.id)}
                   >
-                    Revoke
+                    立即失效
                   </button>
                 </td>
               </tr>

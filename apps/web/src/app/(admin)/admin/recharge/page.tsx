@@ -5,6 +5,7 @@
 import { useEffect, useState } from "react";
 import { apiRequest } from "@/lib/api";
 import { getAdminToken } from "@/lib/admin-auth";
+import { toErrorMessage } from "@/lib/error-message";
 
 type TaskItem = {
   id: string;
@@ -31,7 +32,7 @@ export default function RechargePage() {
       const data = await apiRequest<{ items: TaskItem[] }>("/admin/recharge/tasks", { token });
       setItems(data.items);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Load failed");
+      setMessage(toErrorMessage(error, "加载工单失败"));
     }
   }
 
@@ -49,7 +50,7 @@ export default function RechargePage() {
       setGenerated(result);
       await load();
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Generate failed");
+      setMessage(toErrorMessage(error, "生成充值链接失败"));
     }
   }
 
@@ -63,25 +64,30 @@ export default function RechargePage() {
       });
       await load();
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Update failed");
+      setMessage(toErrorMessage(error, "更新工单状态失败"));
     }
   }
 
   return (
     <section className="grid gap-6">
       <header className="flex items-center justify-between">
-        <h1 className="h-display text-4xl font-semibold">Recharge Workbench</h1>
+        <div>
+          <h1 className="h-display text-4xl font-semibold">充值处理台</h1>
+          <p className="mt-2 text-sm text-[var(--text-subtle)]">
+            用户提交短信登录后，客服在此生成充值链接二维码，线下处理完成后回填状态。
+          </p>
+        </div>
       </header>
 
       <article className="apple-panel overflow-hidden">
         <table className="w-full text-left text-sm">
           <thead className="bg-black text-white">
             <tr>
-              <th className="px-4 py-3">Phone</th>
+              <th className="px-4 py-3">手机号</th>
               <th className="px-4 py-3">Token</th>
-              <th className="px-4 py-3">Status</th>
-              <th className="px-4 py-3">Updated</th>
-              <th className="px-4 py-3">Actions</th>
+              <th className="px-4 py-3">状态</th>
+              <th className="px-4 py-3">更新时间</th>
+              <th className="px-4 py-3">操作</th>
             </tr>
           </thead>
           <tbody>
@@ -97,14 +103,14 @@ export default function RechargePage() {
                     type="button"
                     onClick={() => void generateLink(item.id)}
                   >
-                    Generate Link/QR
+                    生成充值链接/二维码
                   </button>
                   <button
                     className="btn-pill"
                     type="button"
                     onClick={() => void markCompleted(item.id)}
                   >
-                    Mark Completed
+                    标记已完成
                   </button>
                 </td>
               </tr>
@@ -115,11 +121,11 @@ export default function RechargePage() {
 
       {generated ? (
         <section className="apple-panel p-6 text-sm">
-          <p>Status: {generated.status}</p>
-          <p className="break-all">Link: {generated.rechargeLink}</p>
+          <p>状态：{generated.status}</p>
+          <p className="break-all">链接：{generated.rechargeLink}</p>
           {generated.qrPayload ? (
             // eslint-disable-next-line @next/next/no-img-element
-            <img alt="Recharge QR" className="mt-3 h-40 w-40" src={generated.qrPayload} />
+            <img alt="充值二维码" className="mt-3 h-40 w-40" src={generated.qrPayload} />
           ) : null}
         </section>
       ) : null}

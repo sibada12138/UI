@@ -7,4 +7,3 @@ export class CreateTokenDto {
   @Max(120)
   expiresInMinutes?: number;
 }
-

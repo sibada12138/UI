@@ -9,7 +9,10 @@ export class AdminTokenController {
   constructor(private readonly tokenService: TokenService) {}
 
   @Post()
-  create(@Body() dto: CreateTokenDto, @CurrentAdmin() admin?: CurrentAdminUser) {
+  create(
+    @Body() dto: CreateTokenDto,
+    @CurrentAdmin() admin?: CurrentAdminUser,
+  ) {
     return this.tokenService.createToken(dto, admin?.id);
   }
 

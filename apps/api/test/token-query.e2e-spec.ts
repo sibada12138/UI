@@ -46,4 +46,3 @@ describe('Token + Query (e2e)', () => {
       .expect(400);
   });
 });
-

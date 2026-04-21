@@ -5,6 +5,7 @@
 import { FormEvent, useEffect, useState } from "react";
 import { apiRequest } from "@/lib/api";
 import { getAdminToken } from "@/lib/admin-auth";
+import { toErrorMessage } from "@/lib/error-message";
 
 type AdminUser = {
   id: string;
@@ -27,7 +28,7 @@ export default function AdminUsersPage() {
       const data = await apiRequest<{ items: AdminUser[] }>("/admin/admin-users", { token });
       setItems(data.items);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Load failed");
+      setMessage(toErrorMessage(error, "加载管理员列表失败"));
     }
   }
 
@@ -49,26 +50,31 @@ export default function AdminUsersPage() {
       setRole("operator_admin");
       await load();
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Create failed");
+      setMessage(toErrorMessage(error, "创建管理员失败"));
     }
   }
 
   return (
     <section className="grid gap-6">
       <header className="flex items-center justify-between">
-        <h1 className="h-display text-4xl font-semibold">Admin Users</h1>
+        <div>
+          <h1 className="h-display text-4xl font-semibold">管理员账户</h1>
+          <p className="mt-2 text-sm text-[var(--text-subtle)]">
+            仅 `admin` 角色可新增管理员；`operator_admin` 没有继续创建管理员权限。
+          </p>
+        </div>
       </header>
 
       <form className="apple-panel grid gap-4 p-6 md:grid-cols-4" onSubmit={onCreate}>
         <input
           className="field"
-          placeholder="username"
+          placeholder="用户名"
           value={username}
           onChange={(e) => setUsername(e.target.value)}
         />
         <input
           className="field"
-          placeholder="password"
+          placeholder="密码"
           type="password"
           value={password}
           onChange={(e) => setPassword(e.target.value)}
@@ -78,11 +84,11 @@ export default function AdminUsersPage() {
           value={role}
           onChange={(e) => setRole(e.target.value as "admin" | "operator_admin")}
         >
-          <option value="operator_admin">operator_admin</option>
-          <option value="admin">admin</option>
+          <option value="operator_admin">operator_admin（普通管理员）</option>
+          <option value="admin">admin（超级管理员）</option>
         </select>
         <button className="btn-primary" type="submit">
-          Create
+          创建账号
         </button>
       </form>
 
@@ -90,10 +96,10 @@ export default function AdminUsersPage() {
         <table className="w-full text-left text-sm">
           <thead className="bg-black text-white">
             <tr>
-              <th className="px-4 py-3">Username</th>
-              <th className="px-4 py-3">Role</th>
-              <th className="px-4 py-3">Status</th>
-              <th className="px-4 py-3">Created At</th>
+              <th className="px-4 py-3">用户名</th>
+              <th className="px-4 py-3">角色</th>
+              <th className="px-4 py-3">状态</th>
+              <th className="px-4 py-3">创建时间</th>
             </tr>
           </thead>
           <tbody>

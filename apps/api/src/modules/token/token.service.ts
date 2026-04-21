@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -15,10 +16,27 @@ import {
   normalizePhone,
 } from '../../common/security/crypto.util';
 import { TokenStatus } from '@prisma/client';
+import { RiskControlService } from '../risk-control/risk-control.service';
 
 @Injectable()
 export class TokenService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly riskControlService: RiskControlService,
+  ) {}
+
+  private registerTokenSubmitFailure(ip?: string) {
+    const state = this.riskControlService.registerFailure('token_submit', ip);
+    if (state.bannedUntil && state.bannedUntil > Date.now()) {
+      throw new ForbiddenException('TOKEN_SUBMIT_BANNED_1H');
+    }
+  }
+
+  private ensureTokenSubmitAllowed(ip?: string) {
+    if (this.riskControlService.isBanned('token_submit', ip)) {
+      throw new ForbiddenException('TOKEN_SUBMIT_BANNED_1H');
+    }
+  }
 
   async createToken(dto: CreateTokenDto, createdBy?: string) {
     const expiresInMinutes = dto.expiresInMinutes ?? 30;
@@ -137,65 +155,94 @@ export class TokenService {
     submitIp?: string,
     userAgent?: string,
   ) {
+    this.ensureTokenSubmitAllowed(submitIp);
+
+    const normalizedToken = String(token ?? '').trim();
+    if (!normalizedToken) {
+      this.registerTokenSubmitFailure(submitIp);
+      throw new BadRequestException('TOKEN_REQUIRED');
+    }
+    if (!/^tk_[a-zA-Z0-9_-]{8,}$/.test(normalizedToken)) {
+      this.registerTokenSubmitFailure(submitIp);
+      throw new BadRequestException('TOKEN_INVALID');
+    }
+
     const normalizedPhone = normalizePhone(dto.phone);
     if (!/^1\d{10}$/.test(normalizedPhone)) {
       throw new BadRequestException('PHONE_INVALID');
     }
-
-    const result = await this.prisma.$transaction(async (tx) => {
-      const issueToken = await tx.issueToken.findUnique({ where: { token } });
-      if (!issueToken) {
-        throw new NotFoundException('TOKEN_NOT_FOUND');
-      }
-      if (issueToken.status !== TokenStatus.active) {
-        throw new BadRequestException('TOKEN_INVALID');
-      }
-      if (issueToken.expiresAt.getTime() <= Date.now()) {
-        await tx.issueToken.update({
-          where: { id: issueToken.id },
-          data: { status: TokenStatus.expired },
-        });
-        throw new BadRequestException('TOKEN_EXPIRED');
-      }
-
-      const consumeResult = await tx.issueToken.updateMany({
-        where: { id: issueToken.id, status: TokenStatus.active },
-        data: { status: TokenStatus.consumed, consumedAt: new Date() },
-      });
-      if (consumeResult.count !== 1) {
-        throw new BadRequestException('TOKEN_INVALID');
-      }
-
-      const submission = await tx.userSubmission.create({
-        data: {
-          issueTokenId: issueToken.id,
-          phoneHash: hashPlainText(normalizedPhone),
-          phoneEnc: encryptText(normalizedPhone),
-          smsCodeEnc: encryptText(dto.smsCode),
-          submitIp: submitIp?.slice(0, 64),
-          userAgent: userAgent?.slice(0, 255),
-        },
-      });
-      await tx.rechargeTask.create({
-        data: { userSubmissionId: submission.id, status: 'pending' },
-      });
-      await tx.auditLog.create({
-        data: {
-          actorType: 'user',
-          action: 'TOKEN_SUBMIT_SUCCESS',
-          targetType: 'issue_token',
-          targetId: issueToken.id,
-          metadataJson: {
-            phoneMasked: maskPhone(normalizedPhone),
-          },
-        },
-      });
-      return { submissionId: submission.id, issueTokenId: issueToken.id };
+    const issueToken = await this.prisma.issueToken.findUnique({
+      where: { token: normalizedToken },
     });
+    if (!issueToken) {
+      this.registerTokenSubmitFailure(submitIp);
+      throw new NotFoundException('TOKEN_NOT_FOUND');
+    }
+    if (issueToken.status !== TokenStatus.active) {
+      this.registerTokenSubmitFailure(submitIp);
+      throw new BadRequestException('TOKEN_INVALID');
+    }
+    if (issueToken.expiresAt.getTime() <= Date.now()) {
+      await this.prisma.issueToken.update({
+        where: { id: issueToken.id },
+        data: { status: TokenStatus.expired },
+      });
+      this.registerTokenSubmitFailure(submitIp);
+      throw new BadRequestException('TOKEN_EXPIRED');
+    }
+
+    let result: { submissionId: string; issueTokenId: string };
+    try {
+      result = await this.prisma.$transaction(async (tx) => {
+        const consumeResult = await tx.issueToken.updateMany({
+          where: { id: issueToken.id, status: TokenStatus.active },
+          data: { status: TokenStatus.consumed, consumedAt: new Date() },
+        });
+        if (consumeResult.count !== 1) {
+          throw new BadRequestException('TOKEN_INVALID');
+        }
+
+        const submission = await tx.userSubmission.create({
+          data: {
+            issueTokenId: issueToken.id,
+            phoneHash: hashPlainText(normalizedPhone),
+            phoneEnc: encryptText(normalizedPhone),
+            smsCodeEnc: encryptText(dto.smsCode),
+            submitIp: submitIp?.slice(0, 64),
+            userAgent: userAgent?.slice(0, 255),
+          },
+        });
+        await tx.rechargeTask.create({
+          data: { userSubmissionId: submission.id, status: 'pending' },
+        });
+        await tx.auditLog.create({
+          data: {
+            actorType: 'user',
+            action: 'TOKEN_SUBMIT_SUCCESS',
+            targetType: 'issue_token',
+            targetId: issueToken.id,
+            metadataJson: {
+              phoneMasked: maskPhone(normalizedPhone),
+            },
+          },
+        });
+        return { submissionId: submission.id, issueTokenId: issueToken.id };
+      });
+    } catch (error) {
+      if (
+        error instanceof BadRequestException &&
+        String(error.message).includes('TOKEN_INVALID')
+      ) {
+        this.registerTokenSubmitFailure(submitIp);
+      }
+      throw error;
+    }
+
+    this.riskControlService.resetFailure('token_submit', submitIp);
 
     return {
       success: true,
-      token,
+      token: normalizedToken,
       phoneMasked: maskPhone(normalizedPhone),
       status: TokenStatus.consumed,
       submissionId: result.submissionId,

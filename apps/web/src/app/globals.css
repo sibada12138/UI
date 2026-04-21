@@ -2,13 +2,13 @@
 @import "../lib/theme/apple-theme.css";
 
 @theme inline {
-  --color-background: var(--bg-light);
-  --color-foreground: var(--text-dark);
+  --color-background: var(--page-bg);
+  --color-foreground: var(--page-text);
 }
 
 body {
-  background: var(--bg-light);
-  color: var(--text-dark);
+  background: var(--page-bg);
+  color: var(--page-text);
   font-family:
     "SF Pro Text",
     "SF Pro Icons",
@@ -31,7 +31,8 @@ body {
 
 .apple-panel {
   border-radius: var(--radius-md);
-  background: #fff;
+  border: 1px solid var(--card-border);
+  background: var(--card-bg);
   box-shadow: var(--shadow-card);
 }
 
@@ -60,6 +61,13 @@ body {
   border-radius: var(--radius-pill);
   color: var(--link);
   padding: 8px 15px;
+  transition:
+    background-color 0.2s ease,
+    opacity 0.2s ease;
+}
+
+.btn-pill:hover {
+  background: color-mix(in srgb, var(--link) 8%, transparent);
 }
 
 .btn-pill-dark {
@@ -68,10 +76,10 @@ body {
 }
 
 .field {
-  border: 1px solid rgba(0, 0, 0, 0.08);
+  border: 1px solid var(--card-border);
   border-radius: 11px;
-  background: #fafafc;
-  color: var(--text-dark);
+  background: var(--card-bg-soft);
+  color: var(--page-text);
   height: 44px;
   padding: 0 14px;
 }
@@ -79,4 +87,35 @@ body {
 .field:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
+}
+
+.theme-switch {
+  display: inline-flex;
+  gap: 6px;
+  padding: 3px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--card-border);
+  background: color-mix(in srgb, var(--card-bg-soft) 82%, transparent);
+}
+
+.theme-switch button {
+  border-radius: var(--radius-pill);
+  padding: 4px 12px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.theme-switch button.active {
+  background: var(--accent);
+  color: #fff;
+}
+
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  border-radius: var(--radius-pill);
+  padding: 2px 10px;
+  font-size: 12px;
+  border: 1px solid var(--card-border);
+  background: color-mix(in srgb, var(--card-bg-soft) 70%, transparent);
 }

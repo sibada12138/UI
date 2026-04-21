@@ -14,23 +14,21 @@ import {
   normalizePhone,
 } from '../../common/security/crypto.util';
 import { QueryResult, QueryType } from '@prisma/client';
+import { RiskControlService } from '../risk-control/risk-control.service';
 
 type CaptchaCache = {
   code: string;
   expiresAt: number;
 };
 
-type IpRiskState = {
-  failedCount: number;
-  bannedUntil?: number;
-};
-
 @Injectable()
 export class QueryService {
   private readonly captchaMap = new Map<string, CaptchaCache>();
-  private readonly ipRiskMap = new Map<string, IpRiskState>();
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly riskControlService: RiskControlService,
+  ) {}
 
   private randomCaptchaCode() {
     const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -42,30 +40,6 @@ export class QueryService {
 
   private createCaptchaSvg(code: string) {
     return `<svg xmlns="http://www.w3.org/2000/svg" width="120" height="44"><rect width="120" height="44" fill="#f5f5f7"/><text x="60" y="29" text-anchor="middle" font-size="22" font-family="Arial" fill="#1d1d1f" letter-spacing="4">${code}</text></svg>`;
-  }
-
-  private getRiskState(ip: string): IpRiskState {
-    const state = this.ipRiskMap.get(ip) ?? { failedCount: 0 };
-    if (state.bannedUntil && state.bannedUntil <= Date.now()) {
-      state.bannedUntil = undefined;
-      state.failedCount = 0;
-    }
-    this.ipRiskMap.set(ip, state);
-    return state;
-  }
-
-  private registerFailure(ip: string): IpRiskState {
-    const state = this.getRiskState(ip);
-    state.failedCount += 1;
-    if (state.failedCount >= 5) {
-      state.bannedUntil = Date.now() + 60 * 60 * 1000;
-    }
-    this.ipRiskMap.set(ip, state);
-    return state;
-  }
-
-  private resetFailure(ip: string) {
-    this.ipRiskMap.set(ip, { failedCount: 0 });
   }
 
   private verifyCaptcha(captchaId: string, captchaCode: string) {
@@ -93,11 +67,11 @@ export class QueryService {
   }
 
   async queryProgress(dto: PublicQueryDto, ip: string) {
-    const risk = this.getRiskState(ip);
-    if (risk.bannedUntil && risk.bannedUntil > Date.now()) {
+    if (this.riskControlService.isBanned('query', ip)) {
       await this.prisma.queryLog.create({
         data: {
-          queryType: dto.queryType === 'token' ? QueryType.token : QueryType.phone,
+          queryType:
+            dto.queryType === 'token' ? QueryType.token : QueryType.phone,
           queryKeyHash: hashPlainText(dto.queryValue.trim()),
           ip,
           result: QueryResult.banned,
@@ -109,10 +83,11 @@ export class QueryService {
 
     const captchaOk = this.verifyCaptcha(dto.captchaId, dto.captchaCode);
     if (!captchaOk) {
-      const failed = this.registerFailure(ip);
+      const failed = this.riskControlService.registerFailure('query', ip);
       await this.prisma.queryLog.create({
         data: {
-          queryType: dto.queryType === 'token' ? QueryType.token : QueryType.phone,
+          queryType:
+            dto.queryType === 'token' ? QueryType.token : QueryType.phone,
           queryKeyHash: hashPlainText(dto.queryValue.trim()),
           ip,
           result: QueryResult.failed,
@@ -144,12 +119,14 @@ export class QueryService {
           submissions: {
             orderBy: { submittedAt: 'desc' },
             take: 1,
-            include: { rechargeTasks: { orderBy: { updatedAt: 'desc' }, take: 1 } },
+            include: {
+              rechargeTasks: { orderBy: { updatedAt: 'desc' }, take: 1 },
+            },
           },
         },
       });
       if (!token) {
-        this.registerFailure(ip);
+        const failed = this.riskControlService.registerFailure('query', ip);
         await this.prisma.queryLog.create({
           data: {
             queryType: QueryType.token,
@@ -159,6 +136,9 @@ export class QueryService {
             failReason: 'TOKEN_NOT_FOUND',
           },
         });
+        if (failed.bannedUntil && failed.bannedUntil > Date.now()) {
+          throw new ForbiddenException('QUERY_BANNED_1H');
+        }
         throw new NotFoundException('NO_RECORD');
       }
 
@@ -167,7 +147,9 @@ export class QueryService {
       tokenStatus = token.status;
       const submission = token.submissions[0];
       if (submission) {
-        phoneMasked = maskPhone(normalizePhone(decryptText(submission.phoneEnc)));
+        phoneMasked = maskPhone(
+          normalizePhone(decryptText(submission.phoneEnc)),
+        );
         latestUpdatedAt = submission.submittedAt;
         const task = submission.rechargeTasks[0];
         if (task) {
@@ -186,7 +168,7 @@ export class QueryService {
         },
       });
       if (!submission) {
-        this.registerFailure(ip);
+        const failed = this.riskControlService.registerFailure('query', ip);
         await this.prisma.queryLog.create({
           data: {
             queryType: QueryType.phone,
@@ -196,6 +178,9 @@ export class QueryService {
             failReason: 'PHONE_NOT_FOUND',
           },
         });
+        if (failed.bannedUntil && failed.bannedUntil > Date.now()) {
+          throw new ForbiddenException('QUERY_BANNED_1H');
+        }
         throw new NotFoundException('NO_RECORD');
       }
 
@@ -211,7 +196,7 @@ export class QueryService {
       }
     }
 
-    this.resetFailure(ip);
+    this.riskControlService.resetFailure('query', ip);
     await this.prisma.queryLog.create({
       data: {
         queryType: queryType === 'token' ? QueryType.token : QueryType.phone,

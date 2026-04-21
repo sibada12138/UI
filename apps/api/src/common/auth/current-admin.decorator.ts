@@ -14,4 +14,3 @@ export const CurrentAdmin = createParamDecorator(
     return request.admin as CurrentAdminUser | undefined;
   },
 );
-

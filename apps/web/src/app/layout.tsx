@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Recharge Card System",
-  description: "Token-based recharge card management system",
+  title: "充值发卡系统",
+  description: "基于 Token 的登录采集与人工充值管理系统",
 };
 
 export default function RootLayout({

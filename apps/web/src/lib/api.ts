@@ -1,4 +1,4 @@
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? 'http://localhost:3001/api';
+const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? '/api';
 
 type ApiOptions = {
   method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
@@ -14,11 +14,18 @@ export async function apiRequest<T>(path: string, options: ApiOptions = {}) {
     headers.Authorization = `Bearer ${options.token}`;
   }
 
-  const response = await fetch(`${API_BASE}${path}`, {
-    method: options.method ?? 'GET',
-    headers,
-    body: options.body ? JSON.stringify(options.body) : undefined,
-  });
+  const requestUrl = `${API_BASE}${path}`;
+  let response: Response;
+  try {
+    response = await fetch(requestUrl, {
+      method: options.method ?? 'GET',
+      headers,
+      body: options.body ? JSON.stringify(options.body) : undefined,
+      cache: 'no-store',
+    });
+  } catch {
+    throw new Error('NETWORK_ERROR');
+  }
 
   const contentType = response.headers.get('content-type') ?? '';
   const payload = contentType.includes('application/json')
@@ -35,4 +42,3 @@ export async function apiRequest<T>(path: string, options: ApiOptions = {}) {
 
   return payload as T;
 }
-

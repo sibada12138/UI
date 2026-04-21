@@ -14,7 +14,10 @@ export class RechargeController {
   }
 
   @Post(':id/generate-link')
-  generateLink(@Param('id') id: string, @CurrentAdmin() admin?: CurrentAdminUser) {
+  generateLink(
+    @Param('id') id: string,
+    @CurrentAdmin() admin?: CurrentAdminUser,
+  ) {
     return this.rechargeService.generateLink(id, admin?.id);
   }
 

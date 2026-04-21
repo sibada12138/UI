@@ -7,4 +7,3 @@ import { RechargeService } from './recharge.service';
   providers: [RechargeService],
 })
 export class RechargeModule {}
-

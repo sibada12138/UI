@@ -1,4 +1,5 @@
 import { PrismaService } from '../prisma/prisma.service';
+import { RiskControlService } from '../risk-control/risk-control.service';
 import { TokenService } from './token.service';
 
 async function clearDb(prisma: PrismaService) {
@@ -13,7 +14,8 @@ async function clearDb(prisma: PrismaService) {
 
 describe('TokenService', () => {
   const prisma = new PrismaService();
-  const service = new TokenService(prisma);
+  const riskControl = new RiskControlService();
+  const service = new TokenService(prisma, riskControl);
 
   beforeAll(async () => {
     await prisma.$connect();
@@ -46,5 +48,39 @@ describe('TokenService', () => {
       }),
     ).rejects.toThrow('TOKEN_INVALID');
   });
-});
 
+  it('bans ip after 5 consecutive invalid token submissions and supports manual unban', async () => {
+    const ip = '10.20.30.40';
+
+    for (let i = 0; i < 4; i += 1) {
+      await expect(
+        service.submitToken(
+          'tk_invalid_not_exists',
+          { phone: '13800138000', smsCode: '123456' },
+          ip,
+          'jest',
+        ),
+      ).rejects.toThrow('TOKEN_NOT_FOUND');
+    }
+
+    await expect(
+      service.submitToken(
+        'tk_invalid_not_exists',
+        { phone: '13800138000', smsCode: '123456' },
+        ip,
+        'jest',
+      ),
+    ).rejects.toThrow('TOKEN_SUBMIT_BANNED_1H');
+
+    riskControl.clearBan('token_submit', ip);
+
+    await expect(
+      service.submitToken(
+        'tk_invalid_not_exists',
+        { phone: '13800138000', smsCode: '123456' },
+        ip,
+        'jest',
+      ),
+    ).rejects.toThrow('TOKEN_NOT_FOUND');
+  });
+});

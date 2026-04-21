@@ -1,4 +1,5 @@
 import { PrismaService } from '../prisma/prisma.service';
+import { RiskControlService } from '../risk-control/risk-control.service';
 import { QueryService } from './query.service';
 import { PublicQueryDto } from './dto/public-query.dto';
 
@@ -19,7 +20,8 @@ function extractCode(svg: string) {
 
 describe('QueryService', () => {
   const prisma = new PrismaService();
-  const service = new QueryService(prisma);
+  const riskControl = new RiskControlService();
+  const service = new QueryService(prisma, riskControl);
   const ip = '10.10.10.10';
 
   beforeAll(async () => {
@@ -77,4 +79,3 @@ describe('QueryService', () => {
     ).rejects.toThrow('QUERY_BANNED_1H');
   });
 });
-

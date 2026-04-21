@@ -1,6 +1,11 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { createRandomToken, decryptText, maskPhone, normalizePhone } from '../../common/security/crypto.util';
+import {
+  createRandomToken,
+  decryptText,
+  maskPhone,
+  normalizePhone,
+} from '../../common/security/crypto.util';
 import { RechargeStatus } from '@prisma/client';
 import * as QRCode from 'qrcode';
 

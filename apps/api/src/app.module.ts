@@ -11,6 +11,7 @@ import { RechargeModule } from './modules/recharge/recharge.module';
 import { DashboardModule } from './modules/dashboard/dashboard.module';
 import { AdminUserModule } from './modules/admin-user/admin-user.module';
 import { AuditModule } from './modules/audit/audit.module';
+import { RiskControlModule } from './modules/risk-control/risk-control.module';
 import { AdminSessionGuard } from './common/auth/admin-session.guard';
 import { RolesGuard } from './common/auth/roles.guard';
 
@@ -25,6 +26,7 @@ import { RolesGuard } from './common/auth/roles.guard';
     DashboardModule,
     AdminUserModule,
     AuditModule,
+    RiskControlModule,
   ],
   controllers: [AppController],
   providers: [

@@ -9,4 +9,3 @@ import { PublicTokenController } from './token.controller';
   exports: [TokenService],
 })
 export class TokenModule {}
-

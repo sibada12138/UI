@@ -2,7 +2,10 @@ import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { AdminLoginDto } from './dto/admin-login.dto';
 import { PrismaService } from '../prisma/prisma.service';
 import * as argon2 from 'argon2';
-import { createRandomToken, hashPlainText } from '../../common/security/crypto.util';
+import {
+  createRandomToken,
+  hashPlainText,
+} from '../../common/security/crypto.util';
 import { AdminRole } from '@prisma/client';
 
 @Injectable()
