@@ -1,0 +1,82 @@
+@import "tailwindcss";
+@import "../lib/theme/apple-theme.css";
+
+@theme inline {
+  --color-background: var(--bg-light);
+  --color-foreground: var(--text-dark);
+}
+
+body {
+  background: var(--bg-light);
+  color: var(--text-dark);
+  font-family:
+    "SF Pro Text",
+    "SF Pro Icons",
+    "Helvetica Neue",
+    Helvetica,
+    Arial,
+    sans-serif;
+}
+
+.h-display {
+  font-family:
+    "SF Pro Display",
+    "SF Pro Icons",
+    "Helvetica Neue",
+    Helvetica,
+    Arial,
+    sans-serif;
+  letter-spacing: -0.28px;
+}
+
+.apple-panel {
+  border-radius: var(--radius-md);
+  background: #fff;
+  box-shadow: var(--shadow-card);
+}
+
+.btn-primary {
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: var(--accent);
+  color: var(--text-light);
+  padding: 8px 15px;
+  transition:
+    background-color 0.2s ease,
+    opacity 0.2s ease;
+}
+
+.btn-primary:hover {
+  opacity: 0.92;
+}
+
+.btn-primary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.btn-pill {
+  border: 1px solid var(--link);
+  border-radius: var(--radius-pill);
+  color: var(--link);
+  padding: 8px 15px;
+}
+
+.btn-pill-dark {
+  border-color: var(--link-on-dark);
+  color: var(--link-on-dark);
+}
+
+.field {
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 11px;
+  background: #fafafc;
+  color: var(--text-dark);
+  height: 44px;
+  padding: 0 14px;
+}
+
+.field:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}

@@ -1,0 +1,11 @@
+node_modules
+**/node_modules
+.git
+.next
+dist
+coverage
+*.log
+pnpm-debug.log*
+*.tsbuildinfo
+apps/api/dev.db
+apps/api/data

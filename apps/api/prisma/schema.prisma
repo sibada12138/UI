@@ -1,0 +1,156 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+enum AdminRole {
+  admin
+  operator_admin
+}
+
+enum AdminStatus {
+  active
+  disabled
+}
+
+enum TokenStatus {
+  active
+  expired
+  consumed
+  revoked
+}
+
+enum RechargeStatus {
+  pending
+  link_generated
+  processing
+  completed
+  failed
+  cancelled
+}
+
+enum QueryType {
+  token
+  phone
+}
+
+enum QueryResult {
+  success
+  failed
+  banned
+}
+
+model Admin {
+  id                    String         @id @default(cuid())
+  username              String         @unique
+  passwordHash          String
+  role                  AdminRole
+  status                AdminStatus    @default(active)
+  createdBy             String?
+  createdAt             DateTime       @default(now())
+  updatedAt             DateTime       @updatedAt
+  sessions              AdminSession[]
+  operatedRechargeTasks RechargeTask[] @relation("RechargeTaskOperator")
+
+  @@index([role, status])
+}
+
+model AdminSession {
+  id        String   @id @default(cuid())
+  adminId   String
+  tokenHash String   @unique
+  ip        String?
+  userAgent String?
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  admin     Admin    @relation(fields: [adminId], references: [id], onDelete: Cascade)
+
+  @@index([adminId])
+  @@index([expiresAt])
+}
+
+model IssueToken {
+  id          String           @id @default(cuid())
+  token       String           @unique
+  status      TokenStatus      @default(active)
+  expiresAt   DateTime
+  consumedAt  DateTime?
+  revokedAt   DateTime?
+  createdBy   String?
+  createdAt   DateTime         @default(now())
+  submissions UserSubmission[]
+  queryLogs   QueryLog[]
+
+  @@index([status])
+  @@index([expiresAt])
+  @@index([createdAt])
+}
+
+model UserSubmission {
+  id            String         @id @default(cuid())
+  issueTokenId  String
+  phoneHash     String
+  phoneEnc      String
+  smsCodeEnc    String
+  submitIp      String?
+  userAgent     String?
+  submittedAt   DateTime       @default(now())
+  issueToken    IssueToken     @relation(fields: [issueTokenId], references: [id], onDelete: Restrict)
+  rechargeTasks RechargeTask[]
+
+  @@index([issueTokenId])
+  @@index([phoneHash])
+  @@index([submittedAt])
+}
+
+model RechargeTask {
+  id               String         @id @default(cuid())
+  userSubmissionId String
+  status           RechargeStatus @default(pending)
+  rechargeLink     String?
+  qrPayload        String?
+  operatorId       String?
+  remark           String?
+  updatedAt        DateTime       @updatedAt
+  createdAt        DateTime       @default(now())
+  userSubmission   UserSubmission @relation(fields: [userSubmissionId], references: [id], onDelete: Restrict)
+  operator         Admin?         @relation("RechargeTaskOperator", fields: [operatorId], references: [id], onDelete: SetNull)
+
+  @@index([userSubmissionId])
+  @@index([status])
+  @@index([operatorId])
+}
+
+model QueryLog {
+  id           String      @id @default(cuid())
+  queryType    QueryType
+  queryKeyHash String
+  issueTokenId String?
+  ip           String
+  result       QueryResult
+  failReason   String?
+  createdAt    DateTime    @default(now())
+  issueToken   IssueToken? @relation(fields: [issueTokenId], references: [id], onDelete: SetNull)
+
+  @@index([ip, createdAt])
+  @@index([result, createdAt])
+  @@index([queryType, createdAt])
+}
+
+model AuditLog {
+  id           String   @id @default(cuid())
+  actorType    String
+  actorId      String?
+  action       String
+  targetType   String
+  targetId     String?
+  metadataJson Json?
+  createdAt    DateTime @default(now())
+
+  @@index([action, createdAt])
+  @@index([targetType, targetId])
+}

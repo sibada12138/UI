@@ -1,0 +1,56 @@
+services:
+  api:
+    build:
+      context: ..
+      dockerfile: Dockerfile.api
+    container_name: recharge_card_api
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: "3001"
+      DATABASE_URL: "file:./data/dev.db"
+      REDIS_URL: "redis://redis:6379"
+      APP_BASE_URL: "${APP_BASE_URL:-http://localhost:3090}"
+      ADMIN_JWT_SECRET: "${ADMIN_JWT_SECRET:-replace-with-long-random-string}"
+      ADMIN_INIT_USERNAME: "${ADMIN_INIT_USERNAME:-admin}"
+      ADMIN_INIT_PASSWORD: "${ADMIN_INIT_PASSWORD:-change-me}"
+      OUTBOUND_PROXY_URL: "${OUTBOUND_PROXY_URL:-}"
+    volumes:
+      - api_data:/app/apps/api/data
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  web:
+    build:
+      context: ..
+      dockerfile: Dockerfile.web
+    container_name: recharge_card_web
+    restart: unless-stopped
+    ports:
+      - "3090:3000"
+    environment:
+      NODE_ENV: production
+      NEXT_PUBLIC_API_BASE: "/api"
+      API_INTERNAL_BASE: "http://api:3001/api"
+    depends_on:
+      - api
+
+  redis:
+    image: redis:7
+    container_name: recharge_card_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  api_data:
+  redis_data:

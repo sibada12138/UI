@@ -1,0 +1,18 @@
+:root {
+  --bg-dark: #000000;
+  --bg-light: #f5f5f7;
+  --surface-dark: #1d1d1f;
+  --surface-soft-dark: #272729;
+  --text-dark: #1d1d1f;
+  --text-light: #ffffff;
+  --text-muted: rgba(0, 0, 0, 0.8);
+  --text-subtle: rgba(0, 0, 0, 0.48);
+  --accent: #0071e3;
+  --link: #0066cc;
+  --link-on-dark: #2997ff;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-pill: 980px;
+  --shadow-card: rgba(0, 0, 0, 0.22) 3px 5px 30px 0;
+}
+
