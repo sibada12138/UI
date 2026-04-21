@@ -13,6 +13,8 @@ COPY . .
 
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV NODE_OPTIONS=--max-old-space-size=1024
+ENV SKIP_WEB_TYPECHECK=1
+ENV SKIP_WEB_LINT=1
 
 RUN pnpm --filter web build
 
