@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState } from "react";
 import { apiRequest } from "@/lib/api";
 import { getAdminToken } from "@/lib/admin-auth";
@@ -21,34 +22,46 @@ export default function DashboardPage() {
     const token = getAdminToken();
     void apiRequest<Metrics>("/admin/dashboard/metrics", { token })
       .then(setMetrics)
-      .catch((error) => setMessage(toErrorMessage(error, "加载失败")));
+      .catch((error) => setMessage(toErrorMessage(error, "加载主页数据失败")));
   }, []);
 
-  const metricItems = metrics
+  const cards = metrics
     ? [
-        { label: "有效 Token", value: metrics.activeTokens },
-        { label: "今日提交成功", value: metrics.consumedToday },
-        { label: "当前封禁 IP", value: metrics.bannedIpCount },
-        { label: "待处理充值工单", value: metrics.pendingRechargeTasks },
+        { label: "可用 CDK", value: metrics.activeTokens },
+        { label: "今日成功提交", value: metrics.consumedToday },
+        { label: "待处理开号", value: metrics.pendingRechargeTasks },
+        { label: "封禁 IP 数", value: metrics.bannedIpCount },
         { label: "查询失败率", value: `${(metrics.queryFailRate * 100).toFixed(2)}%` },
       ]
     : [];
 
   return (
-    <section className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
-      <article className="apple-panel p-6 md:col-span-2 xl:col-span-3">
-        <h1 className="h-display text-4xl font-semibold">系统运行总览</h1>
-        <p className="mt-3 text-sm text-[var(--text-subtle)]">
-          监控 token 消耗、查询失败率、封禁数量和充值工单积压，便于快速分配客服处理资源。
+    <section className="grid gap-5">
+      <article className="apple-panel p-6">
+        <h1 className="h-display section-title">主页</h1>
+        <p className="mt-2 text-sm text-[var(--text-muted)]">
+          统一查看系统状态，快速进入账户、待办和风控处理。
         </p>
+        <div className="mt-4 flex flex-wrap gap-3">
+          <Link className="btn-primary" href="/admin/todo">
+            进入待办中心
+          </Link>
+          <Link className="btn-pill" href="/admin/risk">
+            前往风控中心
+          </Link>
+        </div>
       </article>
-      {metricItems.map((item) => (
-        <article key={item.label} className="apple-panel p-6">
-          <p className="text-sm text-[var(--text-subtle)]">{item.label}</p>
-          <p className="h-display mt-3 text-4xl font-semibold">{item.value}</p>
-        </article>
-      ))}
-      {message ? <p className="text-sm text-red-600">{message}</p> : null}
+
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+        {cards.map((item) => (
+          <article key={item.label} className="apple-panel p-5">
+            <p className="text-sm text-[var(--text-muted)]">{item.label}</p>
+            <p className="h-display mt-3 text-3xl font-semibold">{item.value}</p>
+          </article>
+        ))}
+      </div>
+
+      {message ? <p className="text-sm text-[var(--danger)]">{message}</p> : null}
     </section>
   );
 }

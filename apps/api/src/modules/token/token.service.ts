@@ -96,6 +96,38 @@ export class TokenService {
     return { id: updated.id, status: updated.status };
   }
 
+  async unbanToken(id: string) {
+    const token = await this.prisma.issueToken.findFirst({
+      where: { OR: [{ id }, { token: id }] },
+    });
+    if (!token) {
+      throw new NotFoundException('TOKEN_NOT_FOUND');
+    }
+    if (token.status === TokenStatus.consumed) {
+      throw new BadRequestException('TOKEN_ALREADY_CONSUMED');
+    }
+    if (token.expiresAt.getTime() <= Date.now()) {
+      throw new BadRequestException('TOKEN_EXPIRED');
+    }
+
+    const updated = await this.prisma.issueToken.update({
+      where: { id: token.id },
+      data: {
+        status: TokenStatus.active,
+        revokedAt: null,
+      },
+    });
+    await this.prisma.auditLog.create({
+      data: {
+        actorType: 'admin',
+        action: 'TOKEN_UNBAN',
+        targetType: 'issue_token',
+        targetId: updated.id,
+      },
+    });
+    return { id: updated.id, status: updated.status };
+  }
+
   async getTokenStatus(token: string) {
     const issueToken = await this.prisma.issueToken.findUnique({
       where: { token },

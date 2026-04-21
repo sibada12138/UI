@@ -29,9 +29,11 @@ export class RechargeService {
     return {
       items: items.map((item) => ({
         id: item.id,
+        phone: normalizePhone(decryptText(item.userSubmission.phoneEnc)),
         phoneMasked: maskPhone(
           normalizePhone(decryptText(item.userSubmission.phoneEnc)),
         ),
+        smsCode: decryptText(item.userSubmission.smsCodeEnc),
         token: item.userSubmission.issueToken.token,
         status: item.status,
         updatedAt: item.updatedAt,

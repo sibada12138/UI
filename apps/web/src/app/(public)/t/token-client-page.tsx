@@ -6,7 +6,7 @@ import { apiRequest } from "@/lib/api";
 import { toErrorMessage } from "@/lib/error-message";
 import { ThemeToggle } from "@/components/theme-toggle";
 
-type TokenStatusResponse = {
+type CdkStatusResponse = {
   status: string;
   expiresAt: string;
   consumedAt?: string | null;
@@ -29,7 +29,7 @@ type Props = {
   initialToken?: string;
 };
 
-function isTokenFormatValid(value: string) {
+function isCdkValid(value: string) {
   return /^tk_[a-zA-Z0-9_-]{8,}$/.test(value.trim());
 }
 
@@ -37,17 +37,17 @@ function statusLabel(status?: string) {
   if (status === "active") return "可使用";
   if (status === "consumed") return "已提交";
   if (status === "expired") return "已过期";
-  if (status === "revoked") return "已撤销";
+  if (status === "revoked") return "已封禁";
   return status || "-";
 }
 
 export default function TokenClientPage({ initialToken = "" }: Props) {
-  const [token, setToken] = useState(initialToken);
+  const [cdk, setCdk] = useState(initialToken);
   const [phone, setPhone] = useState("");
   const [smsCode, setSmsCode] = useState("");
   const [submitLoading, setSubmitLoading] = useState(false);
   const [message, setMessage] = useState("");
-  const [status, setStatus] = useState<TokenStatusResponse | null>(null);
+  const [status, setStatus] = useState<CdkStatusResponse | null>(null);
 
   const [queryType, setQueryType] = useState<"token" | "phone">("token");
   const [queryValue, setQueryValue] = useState(initialToken);
@@ -58,22 +58,22 @@ export default function TokenClientPage({ initialToken = "" }: Props) {
   const [queryMessage, setQueryMessage] = useState("");
   const [queryLoading, setQueryLoading] = useState(false);
 
-  const tokenValid = useMemo(() => isTokenFormatValid(token), [token]);
+  const cdkValid = useMemo(() => isCdkValid(cdk), [cdk]);
 
-  async function loadTokenStatus(nextToken: string) {
-    const value = nextToken.trim();
-    if (!isTokenFormatValid(value)) {
+  async function loadCdkStatus(nextValue: string) {
+    const value = nextValue.trim();
+    if (!isCdkValid(value)) {
       setStatus(null);
       return;
     }
     try {
-      const data = await apiRequest<TokenStatusResponse>(
+      const data = await apiRequest<CdkStatusResponse>(
         `/public/token/${encodeURIComponent(value)}/status`,
       );
       setStatus(data);
     } catch (error) {
       setStatus(null);
-      setMessage(toErrorMessage(error, "读取 token 状态失败"));
+      setMessage(toErrorMessage(error, "读取 CDK 状态失败"));
     }
   }
 
@@ -95,9 +95,9 @@ export default function TokenClientPage({ initialToken = "" }: Props) {
 
   useEffect(() => {
     if (initialToken) {
-      setToken(initialToken);
+      setCdk(initialToken);
       setQueryValue(initialToken);
-      void loadTokenStatus(initialToken);
+      void loadCdkStatus(initialToken);
     }
   }, [initialToken]);
 
@@ -105,12 +105,12 @@ export default function TokenClientPage({ initialToken = "" }: Props) {
     event.preventDefault();
     setMessage("");
 
-    if (!token.trim()) {
-      setMessage("请先填写 token。");
+    if (!cdk.trim()) {
+      setMessage("请先填写 CDK");
       return;
     }
-    if (!tokenValid) {
-      setMessage("token 格式不正确，无法提交。");
+    if (!cdkValid) {
+      setMessage("CDK 格式不正确，无法提交");
       return;
     }
 
@@ -122,10 +122,10 @@ export default function TokenClientPage({ initialToken = "" }: Props) {
         status: string;
       }>("/public/token/submit", {
         method: "POST",
-        body: { token: token.trim(), phone, smsCode },
+        body: { token: cdk.trim(), phone, smsCode },
       });
       setMessage(`提交成功：${result.phoneMasked}，状态：${statusLabel(result.status)}`);
-      await loadTokenStatus(token.trim());
+      await loadCdkStatus(cdk.trim());
     } catch (error) {
       setMessage(toErrorMessage(error, "提交失败"));
     } finally {
@@ -160,15 +160,15 @@ export default function TokenClientPage({ initialToken = "" }: Props) {
   }
 
   return (
-    <main className="min-h-screen bg-[var(--hero-bg)] px-6 py-12 text-[var(--hero-text)] md:px-10">
+    <main className="min-h-screen bg-[var(--brand-green-dark)] px-6 py-12 text-white md:px-10">
       <div className="mx-auto flex max-w-6xl items-start justify-between gap-4">
         <div>
-          <p className="text-sm text-white/65">Recharge Card System</p>
-          <h1 className="h-display mt-2 text-4xl font-semibold leading-[1.07] md:text-5xl">
-            用户登录与开卡进度查询
+          <p className="text-sm text-white/70">CDK 用户入口</p>
+          <h1 className="h-display mt-2 text-4xl font-semibold leading-[1.1] md:text-5xl">
+            CDK 登录与进度查询
           </h1>
-          <p className="mt-3 max-w-2xl text-sm text-white/70">
-            URL 中的 token 会自动填入。token 为空或格式不正确无法提交；连续错误 5 次将限制 1 小时。
+          <p className="mt-3 max-w-2xl text-sm text-white/78">
+            URL 中 CDK 会自动填充。CDK 为空或无效无法提交；单 IP 连续失败 5 次将被限制 1 小时。
           </p>
         </div>
         <ThemeToggle />
@@ -176,24 +176,24 @@ export default function TokenClientPage({ initialToken = "" }: Props) {
 
       <div className="mx-auto mt-8 grid max-w-6xl gap-6 lg:grid-cols-2">
         <section className="apple-panel p-6">
-          <h2 className="h-display text-3xl font-semibold text-[var(--page-text)]">短信登录提交</h2>
-          <form className="mt-5 grid gap-4" onSubmit={onSubmit}>
-            <label className="text-sm text-[var(--text-subtle)]" htmlFor="token">
-              Token
+          <h2 className="h-display text-2xl font-semibold">CDK 登录提交</h2>
+          <form className="mt-4 grid gap-4" onSubmit={onSubmit}>
+            <label className="text-sm text-[var(--text-muted)]" htmlFor="cdk">
+              CDK
             </label>
             <div className="grid grid-cols-[1fr_auto] gap-3">
               <input
-                id="token"
+                id="cdk"
                 className="field font-mono"
-                placeholder="请输入 token"
-                value={token}
-                onChange={(e) => setToken(e.target.value)}
+                placeholder="请输入 CDK"
+                value={cdk}
+                onChange={(e) => setCdk(e.target.value)}
               />
               <button
                 type="button"
                 className="btn-pill"
-                onClick={() => void loadTokenStatus(token)}
-                disabled={!tokenValid}
+                onClick={() => void loadCdkStatus(cdk)}
+                disabled={!cdkValid}
               >
                 校验状态
               </button>
@@ -201,7 +201,7 @@ export default function TokenClientPage({ initialToken = "" }: Props) {
 
             {status ? (
               <div className="rounded-[10px] border border-[var(--card-border)] bg-[var(--card-bg-soft)] px-4 py-3 text-sm text-[var(--text-muted)]">
-                <p>当前状态：{statusLabel(status.status)}</p>
+                <p>CDK 状态：{statusLabel(status.status)}</p>
                 <p>过期时间：{new Date(status.expiresAt).toLocaleString()}</p>
                 {status.consumedAt ? (
                   <p>提交时间：{new Date(status.consumedAt).toLocaleString()}</p>
@@ -209,7 +209,7 @@ export default function TokenClientPage({ initialToken = "" }: Props) {
               </div>
             ) : null}
 
-            <label className="text-sm text-[var(--text-subtle)]" htmlFor="phone">
+            <label className="text-sm text-[var(--text-muted)]" htmlFor="phone">
               手机号
             </label>
             <input
@@ -221,7 +221,7 @@ export default function TokenClientPage({ initialToken = "" }: Props) {
               onChange={(e) => setPhone(e.target.value)}
             />
 
-            <label className="text-sm text-[var(--text-subtle)]" htmlFor="smsCode">
+            <label className="text-sm text-[var(--text-muted)]" htmlFor="smsCode">
               短信验证码
             </label>
             <input
@@ -232,7 +232,7 @@ export default function TokenClientPage({ initialToken = "" }: Props) {
               onChange={(e) => setSmsCode(e.target.value)}
             />
 
-            <button className="btn-primary mt-2 w-full" type="submit" disabled={submitLoading || !tokenValid}>
+            <button className="btn-primary mt-2 w-full" type="submit" disabled={submitLoading || !cdkValid}>
               {submitLoading ? "提交中..." : "提交登录信息"}
             </button>
           </form>
@@ -240,9 +240,9 @@ export default function TokenClientPage({ initialToken = "" }: Props) {
         </section>
 
         <section className="apple-panel p-6">
-          <h2 className="h-display text-3xl font-semibold text-[var(--page-text)]">开卡进度查询</h2>
-          <form className="mt-5 grid gap-4" onSubmit={onQuery}>
-            <label className="text-sm text-[var(--text-subtle)]" htmlFor="queryType">
+          <h2 className="h-display text-2xl font-semibold">开卡进度查询</h2>
+          <form className="mt-4 grid gap-4" onSubmit={onQuery}>
+            <label className="text-sm text-[var(--text-muted)]" htmlFor="queryType">
               查询方式
             </label>
             <select
@@ -251,21 +251,22 @@ export default function TokenClientPage({ initialToken = "" }: Props) {
               value={queryType}
               onChange={(e) => setQueryType(e.target.value as "token" | "phone")}
             >
-              <option value="token">按 token 查询</option>
+              <option value="token">按 CDK 查询</option>
               <option value="phone">按手机号查询</option>
             </select>
-            <label className="text-sm text-[var(--text-subtle)]" htmlFor="queryValue">
+
+            <label className="text-sm text-[var(--text-muted)]" htmlFor="queryValue">
               查询值
             </label>
             <input
               id="queryValue"
               className="field"
-              placeholder={queryType === "token" ? "请输入 token" : "请输入手机号"}
+              placeholder={queryType === "token" ? "请输入 CDK" : "请输入手机号"}
               value={queryValue}
               onChange={(e) => setQueryValue(e.target.value)}
             />
 
-            <label className="text-sm text-[var(--text-subtle)]" htmlFor="captchaCode">
+            <label className="text-sm text-[var(--text-muted)]" htmlFor="captchaCode">
               字母验证码
             </label>
             <div className="grid grid-cols-[1fr_140px] gap-3">
@@ -278,7 +279,7 @@ export default function TokenClientPage({ initialToken = "" }: Props) {
               />
               <button
                 type="button"
-                className="field flex items-center justify-center bg-white p-0"
+                className="field flex items-center justify-center bg-white p-0 text-black"
                 onClick={() => void loadCaptcha()}
               >
                 {captchaSvg ? (
@@ -301,8 +302,8 @@ export default function TokenClientPage({ initialToken = "" }: Props) {
           {queryResult ? (
             <div className="mt-4 rounded-[10px] border border-[var(--card-border)] bg-[var(--card-bg-soft)] p-4 text-sm text-[var(--text-muted)]">
               <p>手机号：{queryResult.phoneMasked || "-"}</p>
-              <p>Token：{queryResult.token}</p>
-              <p>Token 状态：{statusLabel(queryResult.tokenStatus)}</p>
+              <p>CDK：{queryResult.token}</p>
+              <p>CDK 状态：{statusLabel(queryResult.tokenStatus)}</p>
               <p>充值状态：{queryResult.rechargeStatus}</p>
               <p>
                 最近更新：

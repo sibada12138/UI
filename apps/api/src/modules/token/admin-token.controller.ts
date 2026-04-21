@@ -25,4 +25,9 @@ export class AdminTokenController {
   revoke(@Param('id') id: string) {
     return this.tokenService.revokeToken(id);
   }
+
+  @Post(':id/unban')
+  unban(@Param('id') id: string) {
+    return this.tokenService.unbanToken(id);
+  }
 }

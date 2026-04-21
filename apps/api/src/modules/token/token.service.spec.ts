@@ -83,4 +83,14 @@ describe('TokenService', () => {
       ),
     ).rejects.toThrow('TOKEN_NOT_FOUND');
   });
+
+  it('can unban a revoked token before it expires', async () => {
+    const created = await service.createToken({ expiresInMinutes: 30 });
+
+    const revoked = await service.revokeToken(created.id);
+    expect(revoked.status).toBe('revoked');
+
+    const unbanned = await service.unbanToken(created.id);
+    expect(unbanned.status).toBe('active');
+  });
 });

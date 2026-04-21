@@ -42,14 +42,14 @@ export function ThemeToggle() {
         className={mode === "light" ? "active" : ""}
         onClick={() => switchMode("light")}
       >
-        日间
+        浅色
       </button>
       <button
         type="button"
         className={mode === "dark" ? "active" : ""}
         onClick={() => switchMode("dark")}
       >
-        夜间
+        深色
       </button>
     </div>
   );
