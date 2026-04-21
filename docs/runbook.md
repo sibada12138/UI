@@ -41,7 +41,8 @@ pm2 save
   - `POST /api/admin/auth/login`
 - Web:
   - `/`
-  - `/query`
+  - `/t`
+  - `/t/{token}`
   - `/admin/login`
 
 ## 5. Common Operations
@@ -72,4 +73,3 @@ pnpm --filter api test:e2e
 ```bash
 k6 run apps/api/test/load/query-load.k6.js
 ```
-
