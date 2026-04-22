@@ -52,6 +52,22 @@ bash infra/update.sh
 ```bash
 # 不执行 git pull（仅构建并启动）
 bash infra/update.sh --no-pull
+
+# 仅更新 API（最稳，资源占用最低）
+bash infra/update.sh api
+
+# 仅更新 Web
+bash infra/update.sh web
+
+# 只重启，不构建
+bash infra/update.sh api --no-build
+bash infra/update.sh web --no-build
+
+# 分阶段（手动拆分，防卡）
+bash infra/update.sh api-build
+bash infra/update.sh api-up --no-pull
+bash infra/update.sh web-build
+bash infra/update.sh web-up --no-pull
 ```
 
 ## 3. 仅改端口时
