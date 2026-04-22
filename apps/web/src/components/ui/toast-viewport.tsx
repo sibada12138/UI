@@ -32,9 +32,9 @@ export default function ToastViewport() {
 
   const classMap = useMemo(
     () => ({
-      info: "border-[var(--card-border)] bg-white text-[var(--page-text)]",
-      success: "border-emerald-200 bg-emerald-50 text-emerald-700",
-      error: "border-rose-200 bg-rose-50 text-rose-700",
+      info: "border-[var(--brand-green)] bg-white text-[var(--page-text)]",
+      success: "border-[var(--brand-green-dark)] bg-[var(--brand-green-dark)] text-white",
+      error: "border-[var(--danger)] bg-white text-[var(--danger)]",
     }),
     [],
   );
@@ -44,7 +44,7 @@ export default function ToastViewport() {
       {items.map((item) => (
         <div
           key={item.id}
-          className={`rounded-xl border px-3 py-2 text-sm shadow-[0_10px_26px_rgba(0,0,0,0.1)] ${classMap[item.type]}`}
+          className={`rounded-[12px] border px-3 py-2 text-sm shadow-[0_0_0.5px_rgba(0,0,0,0.14),0_1px_1px_rgba(0,0,0,0.24)] ${classMap[item.type]}`}
         >
           {item.message}
         </div>
