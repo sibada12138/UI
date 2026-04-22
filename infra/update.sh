@@ -7,9 +7,12 @@ COMPOSE_FILE="${ROOT_DIR}/infra/docker-compose.yml"
 ENV_FILE="${ROOT_DIR}/infra/.env"
 ENV_EXAMPLE_FILE="${ROOT_DIR}/infra/.env.example"
 
-STAGE="all"
+STAGE="auto"
 NO_PULL=0
 NO_BUILD=0
+RETRY_COUNT=2
+SLEEP_SEC=3
+CHANGED_FILES=""
 
 usage() {
   cat <<'EOF'
@@ -17,26 +20,29 @@ usage() {
   bash infra/update.sh [阶段] [选项]
 
 阶段:
-  all        拉代码 + 构建并启动 api/web（默认）
-  prepare    仅检查环境并 git pull
-  api        仅构建并启动 api（会同时拉起 redis）
-  web        仅构建并启动 web
-  api-build  仅构建 api
-  web-build  仅构建 web
-  api-up     仅启动 api（会同时拉起 redis）
-  web-up     仅启动 web
-  status     查看 compose 服务状态
+  auto      默认。自动 pull 后按改动判断只更新必要服务（推荐）
+  all       拉代码 + 构建并启动 api/web
+  prepare   仅检查环境并 git pull
+  api       仅构建并启动 api（会同时拉起 redis）
+  web       仅构建并启动 web
+  api-build 仅构建 api
+  web-build 仅构建 web
+  api-up    仅启动 api（会同时拉起 redis）
+  web-up    仅启动 web
+  status    查看 compose 服务状态
 
 选项:
-  --no-pull   跳过 git pull
-  --no-build  跳过 build（对 all/api/web 有效，仅 up）
-  -h, --help  显示帮助
+  --no-pull        跳过 git pull
+  --no-build       跳过 build（对 auto/all/api/web 有效，仅 up）
+  --retry=N        失败重试次数（默认 2）
+  --sleep=N        每次重试等待秒数（默认 3）
+  -h, --help       显示帮助
 EOF
 }
 
 for arg in "$@"; do
   case "$arg" in
-    all|prepare|api|web|api-build|web-build|api-up|web-up|status)
+    auto|all|prepare|api|web|api-build|web-build|api-up|web-up|status)
       STAGE="$arg"
       ;;
     --no-pull)
@@ -44,6 +50,12 @@ for arg in "$@"; do
       ;;
     --no-build)
       NO_BUILD=1
+      ;;
+    --retry=*)
+      RETRY_COUNT="${arg#*=}"
+      ;;
+    --sleep=*)
+      SLEEP_SEC="${arg#*=}"
       ;;
     -h|--help)
       usage
@@ -115,13 +127,40 @@ ensure_paths() {
   fi
 }
 
+run_with_retry() {
+  local step_name="$1"
+  shift
+  local attempt=1
+  local max_attempt=$((RETRY_COUNT + 1))
+  until "$@"; do
+    if [ "$attempt" -ge "$max_attempt" ]; then
+      warn "步骤失败且达到重试上限: $step_name"
+      return 1
+    fi
+    warn "步骤失败，${SLEEP_SEC}s 后重试 (${attempt}/${RETRY_COUNT}): $step_name"
+    sleep "$SLEEP_SEC"
+    attempt=$((attempt + 1))
+  done
+}
+
 pull_latest() {
-  if [ "$NO_PULL" -eq 1 ]; then
+  if [ "$NO_PULL" -eq 1 ] || ! command -v git >/dev/null 2>&1; then
     return
   fi
-  if command -v git >/dev/null 2>&1; then
-    log "拉取最新代码..."
-    git -C "$ROOT_DIR" pull --ff-only || warn "git pull 失败，请检查仓库状态。"
+
+  local old_head
+  local new_head
+  old_head="$(git -C "$ROOT_DIR" rev-parse HEAD 2>/dev/null || true)"
+
+  log "拉取最新代码..."
+  if ! git -C "$ROOT_DIR" pull --ff-only; then
+    warn "git pull 失败，请检查仓库状态。"
+    return
+  fi
+
+  new_head="$(git -C "$ROOT_DIR" rev-parse HEAD 2>/dev/null || true)"
+  if [ -n "$old_head" ] && [ -n "$new_head" ] && [ "$old_head" != "$new_head" ]; then
+    CHANGED_FILES="$(git -C "$ROOT_DIR" diff --name-only "$old_head..$new_head" || true)"
   fi
 }
 
@@ -147,65 +186,125 @@ show_status() {
   compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" ps
 }
 
+detect_need_api() {
+  local files="$1"
+  if [ -z "$files" ]; then
+    return 1
+  fi
+  printf '%s\n' "$files" | grep -Eq \
+    '^(apps/api/|Dockerfile\.api$|infra/docker-compose\.yml$|pnpm-lock\.yaml$|package\.json$|pnpm-workspace\.yaml$|turbo\.json$|infra/\.env\.example$|\.env\.example$)'
+}
+
+detect_need_web() {
+  local files="$1"
+  if [ -z "$files" ]; then
+    return 1
+  fi
+  printf '%s\n' "$files" | grep -Eq \
+    '^(apps/web/|Dockerfile\.web$|infra/docker-compose\.yml$|pnpm-lock\.yaml$|package\.json$|pnpm-workspace\.yaml$|turbo\.json$|infra/\.env\.example$|\.env\.example$)'
+}
+
+run_auto() {
+  pull_latest
+
+  local need_api=0
+  local need_web=0
+
+  if [ "$NO_PULL" -eq 1 ]; then
+    # 手动跳过 pull 时，无法可靠判断差异，默认两边都更新。
+    need_api=1
+    need_web=1
+  elif [ -z "$CHANGED_FILES" ]; then
+    log "未检测到代码更新，跳过构建。"
+  else
+    if detect_need_api "$CHANGED_FILES"; then need_api=1; fi
+    if detect_need_web "$CHANGED_FILES"; then need_web=1; fi
+  fi
+
+  if [ "$NO_BUILD" -eq 1 ]; then
+    if [ "$need_api" -eq 1 ]; then run_with_retry "api-up" up_service api; fi
+    if [ "$need_web" -eq 1 ]; then run_with_retry "web-up" up_service web; fi
+    show_status
+    log "完成阶段: auto（no-build）"
+    return
+  fi
+
+  if [ "$need_api" -eq 1 ]; then
+    run_with_retry "api-build" build_service api
+    run_with_retry "api-up" up_service api
+  fi
+  if [ "$need_web" -eq 1 ]; then
+    run_with_retry "web-build" build_service web
+    run_with_retry "web-up" up_service web
+  fi
+
+  show_status
+  log "完成阶段: auto"
+}
+
 main() {
   ensure_compose
   ensure_paths
 
   case "$STAGE" in
+    auto)
+      run_auto
+      ;;
     prepare)
       pull_latest
       show_status
+      log "完成阶段: prepare"
       ;;
     api-build)
       pull_latest
-      build_service api
+      run_with_retry "api-build" build_service api
       show_status
+      log "完成阶段: api-build"
       ;;
     web-build)
       pull_latest
-      build_service web
+      run_with_retry "web-build" build_service web
       show_status
+      log "完成阶段: web-build"
       ;;
     api-up)
       pull_latest
-      up_service api
+      run_with_retry "api-up" up_service api
       show_status
+      log "完成阶段: api-up"
       ;;
     web-up)
       pull_latest
-      up_service web
+      run_with_retry "web-up" up_service web
       show_status
+      log "完成阶段: web-up"
       ;;
     api)
       pull_latest
-      if [ "$NO_BUILD" -eq 0 ]; then
-        build_service api
-      fi
-      up_service api
+      if [ "$NO_BUILD" -eq 0 ]; then run_with_retry "api-build" build_service api; fi
+      run_with_retry "api-up" up_service api
       show_status
+      log "完成阶段: api"
       ;;
     web)
       pull_latest
-      if [ "$NO_BUILD" -eq 0 ]; then
-        build_service web
-      fi
-      up_service web
+      if [ "$NO_BUILD" -eq 0 ]; then run_with_retry "web-build" build_service web; fi
+      run_with_retry "web-up" up_service web
       show_status
+      log "完成阶段: web"
       ;;
     status)
       show_status
+      log "完成阶段: status"
       ;;
     all)
       pull_latest
-      if [ "$NO_BUILD" -eq 0 ]; then
-        build_service api
-      fi
-      up_service api
-      if [ "$NO_BUILD" -eq 0 ]; then
-        build_service web
-      fi
-      up_service web
+      if [ "$NO_BUILD" -eq 0 ]; then run_with_retry "api-build" build_service api; fi
+      run_with_retry "api-up" up_service api
+      if [ "$NO_BUILD" -eq 0 ]; then run_with_retry "web-build" build_service web; fi
+      run_with_retry "web-up" up_service web
       show_status
+      log "完成阶段: all"
       ;;
     *)
       warn "未知阶段: $STAGE"
@@ -213,8 +312,6 @@ main() {
       exit 1
       ;;
   esac
-
-  log "完成阶段: $STAGE"
 }
 
 main "$@"
