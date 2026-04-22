@@ -3,7 +3,7 @@ import {
   BadRequestException,
   Injectable,
 } from '@nestjs/common';
-import { createHash } from 'crypto';
+import { createHash, randomBytes } from 'crypto';
 import { Prisma } from '@prisma/client';
 import { ProxyAgent } from 'undici';
 import * as QRCode from 'qrcode';
@@ -21,12 +21,70 @@ import { VipOverviewDto } from './dto/vip-overview.dto';
 type RawJson = Record<string, unknown>;
 type PayloadValue = string | number | boolean;
 
+const APP_SIG_SIGN_KEY = 'Tw5AY783H@EU3#XC';
+const APP_SIG_VERSION = '1.3';
+const APP_SIG_DEFAULT_APP_ID = '6184556633574670337';
+
+const CHANNEL_DEFAULTS: Record<
+  RechargeChannel,
+  {
+    createMode: 'h5_transaction' | 'android_order';
+    appId: string;
+    payChannel: 'alipay' | 'lenovo';
+    h5Payload?: Record<string, string>;
+    androidPayload?: Record<string, string>;
+  }
+> = {
+  联想: {
+    createMode: 'h5_transaction',
+    appId: '6829803307010000000',
+    payChannel: 'lenovo',
+    h5Payload: {
+      productId: '7404045067775924234',
+      promotionId: '7404045237741709410',
+      tradeSessionId: '7452615311004039822',
+    },
+  },
+  网页: {
+    createMode: 'h5_transaction',
+    appId: '6829803307010000000',
+    payChannel: 'alipay',
+    h5Payload: {
+      productId: '7128304588855461619',
+      promotionId: '7128304882968448028',
+      tradeSessionId: '7452615311528057245',
+    },
+  },
+  Android: {
+    createMode: 'android_order',
+    appId: APP_SIG_DEFAULT_APP_ID,
+    payChannel: 'alipay',
+    androidPayload: {
+      id: '6917711922213447365',
+      purchase_type: '1',
+      product_type: '1',
+      promotional_type: '11',
+      renew_sign_mode: '1',
+      ext: '{"entrance":"new_pageEntrance","touch_type":"5","location":"9","hb_source":"99","user_type":"0","page_id":"vip_page","MT_PAY_CHANNEL":"alipay","vipSource":"1001","functionId":""}',
+      sku_num: '',
+      client_brand: 'OnePlus',
+      client_channel_id: 'taobao',
+      client_id: '1089867602',
+      country_code: 'CN',
+      sigEnv: '0',
+      user_agent: 'mtxx-111700-OnePlus-KB2000-android-11-706a1555',
+      version: '11.17.0',
+    },
+  },
+};
+
 export type RechargeChannel = '联想' | '网页' | 'Android';
 
 export type RechargeFlowInput = {
   channel: RechargeChannel;
   accessToken: string;
   cookie?: string;
+  maxPrice?: number;
   transactionPayload?: Record<string, PayloadValue>;
   orderPayload?: Record<string, PayloadValue>;
   cashierPayload?: Record<string, PayloadValue>;
@@ -187,16 +245,109 @@ export class ExternalIntegrationService {
       : 'EXTERNAL_API_FAILED';
   }
 
-  private encodeSmsCaptcha(captcha: string, unloginToken: string) {
+  private encodeSmsCaptcha(
+    captcha: string,
+    unloginToken: string,
+    zipVersion: string,
+  ) {
     const raw = String(captcha ?? '').trim().toLowerCase();
     const token = String(unloginToken ?? '').trim();
     if (!raw || !token) {
       return '';
     }
     const first = createHash('md5')
-      .update(`${raw}${token}${this.zipVersion}`, 'utf8')
+      .update(`${raw}${token}${zipVersion}`, 'utf8')
       .digest('hex');
     return createHash('md5').update(first, 'utf8').digest('hex');
+  }
+
+  private buildGnum() {
+    return randomBytes(18).toString('hex').slice(0, 36);
+  }
+
+  private getAppSigSecKey(appId: string) {
+    if (appId === '6184556633574670337') return 'qsF=+BcElEWFulmW';
+    if (appId === '6184556654793654273') return 'iyC8GObqVIT3U!X_';
+    if (appId === '6184556739355017217') return 'sqA#QH=M+Ns&q+Z&';
+    if (appId === '6184557056498925569') return 'xX2mBC_L+N#EJyK2';
+    return '';
+  }
+
+  private buildAppSig(
+    form: Record<string, string>,
+    path: string,
+    appId = APP_SIG_DEFAULT_APP_ID,
+    timestamp = String(Date.now()),
+  ) {
+    const secKey = this.getAppSigSecKey(appId);
+    if (!secKey) {
+      throw new BadRequestException('EXTERNAL_APP_SIG_APPID_INVALID');
+    }
+    const filteredValues = Object.entries(form)
+      .filter(([key]) => !['sig', 'sigTime', 'sigVersion'].includes(key))
+      .map(([, value]) => String(value))
+      .sort((a, b) => a.localeCompare(b));
+    const signString = `${path}${filteredValues.join('')}${secKey}${timestamp}${APP_SIG_SIGN_KEY}`;
+    const md5 = createHash('md5').update(signString, 'utf8').digest('hex');
+    const chars = md5.split('');
+    for (let i = 0; i < chars.length - 1; i += 2) {
+      const current = chars[i];
+      chars[i] = chars[i + 1];
+      chars[i + 1] = current;
+    }
+    return {
+      sig: chars.join(''),
+      sigTime: timestamp,
+      sigVersion: APP_SIG_VERSION,
+    };
+  }
+
+  private decodeUrlComponentSafe(value: string) {
+    try {
+      return decodeURIComponent(value.replace(/\+/g, ' '));
+    } catch {
+      return value;
+    }
+  }
+
+  private parsePriceFromText(source: string) {
+    const text = String(source ?? '');
+    if (!text) {
+      return null;
+    }
+
+    const decodedOnce = this.decodeUrlComponentSafe(text);
+    const decodedTwice = this.decodeUrlComponentSafe(decodedOnce);
+    const candidateText = [text, decodedOnce, decodedTwice].join('\n');
+    const patterns = [
+      /(?:^|[&?])amount=([0-9]+(?:\.[0-9]+)?)/i,
+      /total_amount["':= ]+([0-9]+(?:\.[0-9]+)?)/i,
+      /single_amount["':= ]+([0-9]+(?:\.[0-9]+)?)/i,
+      /price["':= ]+([0-9]+(?:\.[0-9]+)?)/i,
+    ];
+
+    for (const regex of patterns) {
+      const matched = candidateText.match(regex);
+      if (!matched?.[1]) {
+        continue;
+      }
+      const parsed = Number(matched[1]);
+      if (!Number.isFinite(parsed) || parsed <= 0) {
+        continue;
+      }
+      const normalized = parsed > 20 ? parsed / 100 : parsed;
+      return Number(normalized.toFixed(2));
+    }
+    return null;
+  }
+
+  private extractFirstUrl(text: string) {
+    const matched = String(text ?? '').match(/https?:\/\/[^\s"'<>]+/i);
+    return matched?.[0] ?? '';
+  }
+
+  private getRechargeChannelConfig(channel: RechargeChannel) {
+    return CHANNEL_DEFAULTS[channel];
   }
 
   private toStringRecord(source: Record<string, PayloadValue> = {}) {
@@ -356,41 +507,66 @@ export class ExternalIntegrationService {
 
   async smsSendCode(dto: SmsSendCodeDto, actorId?: string) {
     const deviceId = this.getDeviceId(dto.deviceId);
-    const encodedCaptcha = this.encodeSmsCaptcha(dto.captcha, dto.unloginToken);
-    if (!encodedCaptcha) {
+    const primaryEncoded = this.encodeSmsCaptcha(
+      dto.captcha,
+      dto.unloginToken,
+      this.zipVersion,
+    );
+    const fallbackEncoded =
+      this.zipVersion === '2.9.5.1'
+        ? ''
+        : this.encodeSmsCaptcha(dto.captcha, dto.unloginToken, '2.9.5.1');
+    const captchaCandidateList = [primaryEncoded, fallbackEncoded].filter(Boolean);
+    if (captchaCandidateList.length === 0) {
       throw new BadRequestException('CAPTCHA_INVALID');
     }
+
     const url = 'https://api.account.meitu.com/common/login_verify_code';
-    const form = {
-      client_id: String(this.suggestClientId + 1),
-      client_language: 'zh-CN',
-      os_type: 'web',
-      sid: '',
-      zip_version: this.zipVersion,
-      web_version: this.webVersion,
-      is_web: '1',
-      app_package: '',
-      source_from: '',
-      mt_g: deviceId,
-      type: 'reset_password',
-      phone_cc: String(dto.phoneCc),
-      phone: normalizePhone(dto.phone),
-      captcha: encodedCaptcha,
-    };
-    const result = await this.requestJson(url, {
-      method: 'POST',
-      form,
-      headers: {
-        'Unlogin-Token': dto.unloginToken.trim(),
-        Referer: url,
-      },
-    });
-    this.assertApiSuccess(result.data);
+    let result: { response: Response; data: RawJson } | null = null;
+    let lastError: unknown = null;
+
+    for (const encodedCaptcha of captchaCandidateList) {
+      const form = {
+        client_id: String(this.suggestClientId + 1),
+        client_language: 'zh-CN',
+        os_type: 'web',
+        gnum: this.buildGnum(),
+        sid: '',
+        zip_version: this.zipVersion,
+        web_version: this.webVersion,
+        is_web: '1',
+        app_package: '',
+        source_from: '',
+        mt_g: deviceId,
+        type: 'reset_password',
+        phone_cc: String(dto.phoneCc),
+        phone: normalizePhone(dto.phone),
+        captcha: encodedCaptcha,
+      };
+      try {
+        result = await this.requestJson(url, {
+          method: 'POST',
+          form,
+          headers: {
+            'Unlogin-Token': dto.unloginToken.trim(),
+            Referer: url,
+          },
+        });
+        this.assertApiSuccess(result.data);
+        break;
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    if (!result) {
+      throw (lastError as Error) ?? new BadRequestException('EXTERNAL_API_FAILED');
+    }
 
     await this.logAction(actorId, 'EXTERNAL_SMS_SEND_CODE', {
       phoneMasked: `${String(dto.phone).slice(0, 3)}****${String(dto.phone).slice(-4)}`,
       phoneCc: dto.phoneCc,
       deviceId,
+      unloginTokenPrefix: dto.unloginToken.slice(0, 8),
     });
     return result.data;
   }
@@ -659,130 +835,247 @@ export class ExternalIntegrationService {
     };
   }
 
+  private assertWalletSuccess(data: RawJson) {
+    const code = Number((data as RawJson).code ?? NaN);
+    if (Number.isFinite(code) && ![0, 100000].includes(code)) {
+      throw new BadRequestException(
+        this.toSafeMessage((data as RawJson).msg ?? (data as RawJson).message),
+      );
+    }
+  }
+
+  private async createH5Transaction(
+    input: RechargeFlowInput,
+    accessToken: string,
+  ) {
+    const config = this.getRechargeChannelConfig(input.channel);
+    const h5TransactionUrl =
+      process.env.EXTERNAL_RECHARGE_H5_TRANSACTION_URL?.trim() ||
+      'https://api-h5-sub.meitu.com/h5/transaction/v2/create.json';
+    const payload = this.toStringRecord({
+      ...(config.h5Payload ?? {}),
+      returnUrl: 'https://web-payment.meitu.com/payment/success',
+      ...(input.transactionPayload ?? {}),
+    });
+
+    const tx = await this.requestJson(h5TransactionUrl, {
+      method: 'POST',
+      headers: {
+        'Access-Token': accessToken,
+        ...(input.cookie?.trim() ? { Cookie: input.cookie.trim() } : {}),
+        App_id: payload.appId || config.appId,
+        Language: 'zh-Hans',
+        Platform: '4',
+        Sdk_version: '1.0.0',
+        System_type: '1',
+        Origin: 'https://web-payment.meitu.com',
+        Referer: 'https://web-payment.meitu.com/',
+      },
+      form: payload,
+    });
+    this.assertApiSuccess(tx.data);
+
+    const financialContent =
+      this.findFirstStringValue(tx.data, ['financial_content']) ?? '';
+    const transactionId =
+      this.findFirstStringValue(tx.data, ['transaction_id']) ?? '';
+    const priceValue = this.parsePriceFromText(financialContent);
+    return {
+      payload,
+      financialContent,
+      transactionId,
+      priceValue,
+      raw: tx.data,
+    };
+  }
+
+  private async createAndroidOrder(
+    input: RechargeFlowInput,
+    accessToken: string,
+  ) {
+    const config = this.getRechargeChannelConfig('Android');
+    const orderCreateUrl =
+      process.env.EXTERNAL_RECHARGE_ORDER_CREATE_URL?.trim() ||
+      'https://api.xiuxiu.meitu.com/v1/vip/subscription/order/create.json';
+    const path = orderCreateUrl
+      .replace(/^https:\/\/api\.xiuxiu\.meitu\.com\/v1\//, '')
+      .replace(/^https:\/\/api-sub\.meitu\.com\/v2\//, '');
+    const payload = this.toStringRecord({
+      ...(config.androidPayload ?? {}),
+      ...(input.orderPayload ?? {}),
+    });
+    const sig = this.buildAppSig(
+      payload,
+      path,
+      config.appId || APP_SIG_DEFAULT_APP_ID,
+      String(Date.now()),
+    );
+    const form = this.toStringRecord({
+      ...payload,
+      sig: sig.sig,
+      sigTime: sig.sigTime,
+      sigVersion: sig.sigVersion,
+    });
+
+    const order = await this.requestJson(orderCreateUrl, {
+      method: 'POST',
+      headers: {
+        'Access-Token': accessToken,
+        ...(input.cookie?.trim() ? { Cookie: input.cookie.trim() } : {}),
+        Connection: 'Keep-Alive',
+        HAVE_PRE_HEADER: 'HAVE_PRE_HEADER',
+        HAVE_PRE_REFRESH_TOKEN: 'HAVE_PRE_REFRESH_TOKEN',
+        HAVE_PRE_SIGN: 'HAVE_PRE_SIGN',
+        Host: 'api.xiuxiu.meitu.com',
+        'User-Agent':
+          process.env.EXTERNAL_ANDROID_UA ??
+          'mtxx-111700-OnePlus-KB2000-android-11-706a1555',
+      },
+      form,
+    });
+    this.assertApiSuccess(order.data);
+    const retCode = Number((order.data as RawJson).ret ?? 0);
+    if (Number.isFinite(retCode) && retCode !== 0) {
+      throw new BadRequestException(
+        this.toSafeMessage((order.data as RawJson).msg ?? 'EXTERNAL_API_FAILED'),
+      );
+    }
+
+    const content = this.findFirstStringValue(order.data, ['content']) ?? '';
+    const orderId =
+      this.findFirstStringValue(order.data, ['order_id', 'orderid']) ?? '';
+    const priceValue = this.parsePriceFromText(content);
+    return {
+      payload: form,
+      content,
+      orderId,
+      priceValue,
+      raw: order.data,
+    };
+  }
+
+  private async createCashierAgreement(
+    input: RechargeFlowInput,
+    content: string,
+  ) {
+    const config = this.getRechargeChannelConfig(input.channel);
+    const cashierAgreementUrl =
+      process.env.EXTERNAL_RECHARGE_CASHIER_URL?.trim() ||
+      'https://api.wallet.meitu.com/payment/cashier/agreement.json';
+    const form = this.toStringRecord({
+      content,
+      trade_type: input.channel === 'Android' ? 'APP' : 'WAP',
+      pay_channel:
+        String(input.cashierPayload?.pay_channel ?? '').trim() ||
+        config.payChannel,
+      language: 'zh-Hans',
+      ...(input.cashierPayload ?? {}),
+    });
+
+    const cashier = await this.requestJson(cashierAgreementUrl, {
+      method: 'POST',
+      headers:
+        input.channel === 'Android'
+          ? {
+              Connection: 'Keep-Alive',
+              Host: 'api.wallet.meitu.com',
+              'User-Agent':
+                process.env.EXTERNAL_ANDROID_UA ??
+                'mtxx-111700-OnePlus-KB2000-android-11-706a1555',
+            }
+          : {
+              Origin: 'https://web-payment.meitu.com',
+              Referer: 'https://web-payment.meitu.com/',
+              Host: 'api.wallet.meitu.com',
+            },
+      form,
+    });
+    this.assertWalletSuccess(cashier.data);
+
+    const keyHints =
+      input.channel === '联想'
+        ? ['lenovo_content', 'alipay_content', 'content']
+        : ['alipay_content', 'lenovo_content', 'content'];
+    const paymentContent =
+      this.findFirstStringValue(cashier.data, keyHints) ??
+      this.findFirstStringValue(cashier.data, [
+        'payment_url',
+        'pay_url',
+        'cashier_url',
+      ]) ??
+      '';
+    if (!paymentContent) {
+      throw new BadGatewayException('RECHARGE_PAYMENT_URL_NOT_FOUND');
+    }
+    const paymentUrl = this.extractFirstUrl(paymentContent) || paymentContent;
+    return {
+      paymentContent,
+      paymentUrl,
+      raw: cashier.data,
+    };
+  }
+
   async createRechargeFlow(input: RechargeFlowInput) {
     const accessToken = input.accessToken.trim();
     if (!accessToken) {
       throw new BadRequestException('EXTERNAL_ACCESS_TOKEN_REQUIRED');
     }
-
-    const isMobileChannel = input.channel === 'Android';
-    const commonHeaders = {
-      'Access-Token': accessToken,
-      ...(input.cookie?.trim() ? { Cookie: input.cookie.trim() } : {}),
-    };
+    const maxPrice =
+      typeof input.maxPrice === 'number' && Number.isFinite(input.maxPrice)
+        ? input.maxPrice
+        : 1.1;
 
     const vipData = await this.vipOverview(
       { accessToken, cookie: input.cookie },
       input.actorId,
     );
 
-    const h5TransactionUrl =
-      process.env.EXTERNAL_RECHARGE_H5_TRANSACTION_URL?.trim() ||
-      'https://api-h5-sub.meitu.com/h5/transaction/v2/create.json';
-    const orderCreateUrl =
-      process.env.EXTERNAL_RECHARGE_ORDER_CREATE_URL?.trim() ||
-      'https://api.xiuxiu.meitu.com/v1/vip/subscription/order/create.json';
-    const cashierAgreementUrl =
-      process.env.EXTERNAL_RECHARGE_CASHIER_URL?.trim() ||
-      'https://api.wallet.meitu.com/payment/cashier/agreement.json';
-
-    let transactionResponse: RawJson | null = null;
-    if (!isMobileChannel) {
-      const transactionPayload = this.toStringRecord({
-        channel: input.channel,
-        ...(input.transactionPayload ?? {}),
-      });
-      const tx = await this.requestJson(h5TransactionUrl, {
-        method: 'POST',
-        headers: commonHeaders,
-        form: transactionPayload,
-      });
-      this.assertApiSuccess(tx.data);
-      transactionResponse = tx.data;
+    const isAndroid = input.channel === 'Android';
+    const created = isAndroid
+      ? await this.createAndroidOrder(input, accessToken)
+      : await this.createH5Transaction(input, accessToken);
+    const priceValue = created.priceValue;
+    if (priceValue == null) {
+      throw new BadRequestException('RECHARGE_PRICE_NOT_FOUND');
     }
-
-    const orderPayload = this.toStringRecord({
-      channel: input.channel,
-      ...(input.orderPayload ?? {}),
-    });
-    const order = await this.requestJson(orderCreateUrl, {
-      method: 'POST',
-      headers: commonHeaders,
-      form: orderPayload,
-    });
-    this.assertApiSuccess(order.data);
-
-    const priceValue = this.findFirstNumberValue(order.data, [
-      'price',
-      'amount',
-      'pay_amount',
-      'total_fee',
-    ]);
-    if (typeof priceValue === 'number' && priceValue > 1.1) {
+    if (priceValue > maxPrice) {
       throw new BadRequestException('RECHARGE_PRICE_NOT_ALLOWED');
     }
 
-    const orderNo =
-      this.findFirstStringValue(order.data, [
-        'order_no',
-        'orderid',
-        'order_id',
-        'trade_no',
-      ]) ?? '';
-
-    const cashierPayload = this.toStringRecord({
-      channel: input.channel,
-      ...(orderNo ? { order_no: orderNo } : {}),
-      ...(input.cashierPayload ?? {}),
-    });
-    const cashier = await this.requestJson(cashierAgreementUrl, {
-      method: 'POST',
-      headers: commonHeaders,
-      form: cashierPayload,
-    });
-    this.assertApiSuccess(cashier.data);
-
-    const paymentUrl =
-      this.findFirstStringValue(cashier.data, [
-        'qr',
-        'qrcode',
-        'pay_url',
-        'cashier_url',
-        'payment_url',
-      ]) ??
-      this.findFirstStringValue(order.data, [
-        'qr',
-        'qrcode',
-        'pay_url',
-        'cashier_url',
-        'payment_url',
-      ]);
-
-    if (!paymentUrl) {
-      throw new BadGatewayException('RECHARGE_PAYMENT_URL_NOT_FOUND');
-    }
-
-    const qrPayload = paymentUrl.startsWith('data:image/')
-      ? paymentUrl
-      : await QRCode.toDataURL(paymentUrl);
+    const contentForAgreement =
+      input.channel === 'Android'
+        ? (created as { content: string }).content
+        : (created as { financialContent: string }).financialContent;
+    const agreement = await this.createCashierAgreement(
+      input,
+      contentForAgreement,
+    );
+    const qrPayload = agreement.paymentUrl.startsWith('data:image/')
+      ? agreement.paymentUrl
+      : await QRCode.toDataURL(agreement.paymentUrl);
+    const orderNo = isAndroid
+      ? String((created as { orderId: string }).orderId || '')
+      : String((created as { transactionId: string }).transactionId || '');
 
     await this.logAction(input.actorId, 'EXTERNAL_RECHARGE_FLOW', {
       channel: input.channel,
-      hasTransaction: Boolean(transactionResponse),
+      mode: isAndroid ? 'android_order' : 'h5_transaction',
       hasOrderNo: Boolean(orderNo),
       priceValue: priceValue ?? null,
+      maxPrice,
     });
 
     return {
       channel: input.channel,
-      paymentUrl,
+      paymentUrl: agreement.paymentUrl,
+      paymentContent: agreement.paymentContent,
       qrPayload,
       orderNo,
-      priceValue: priceValue ?? null,
+      priceValue,
       vip: vipData,
-      transaction: transactionResponse,
-      order: order.data,
-      cashier: cashier.data,
+      transaction: isAndroid ? null : (created as { raw: RawJson }).raw,
+      order: isAndroid ? (created as { raw: RawJson }).raw : null,
+      cashier: agreement.raw,
     };
   }
 
@@ -790,6 +1083,7 @@ export class ExternalIntegrationService {
     channel: RechargeChannel;
     accessToken: string;
     cookie?: string;
+    maxPrice?: number;
     actorId?: string;
   }): Promise<ChannelCapabilityCheck> {
     const accessToken = input.accessToken.trim();
@@ -801,50 +1095,37 @@ export class ExternalIntegrationService {
         reason: 'EXTERNAL_ACCESS_TOKEN_REQUIRED',
       };
     }
-
-    const isMobileChannel = input.channel === 'Android';
-    const commonHeaders = {
-      'Access-Token': accessToken,
-      ...(input.cookie?.trim() ? { Cookie: input.cookie.trim() } : {}),
-    };
-
-    const h5TransactionUrl =
-      process.env.EXTERNAL_RECHARGE_H5_TRANSACTION_URL?.trim() ||
-      'https://api-h5-sub.meitu.com/h5/transaction/v2/create.json';
-    const orderCreateUrl =
-      process.env.EXTERNAL_RECHARGE_ORDER_CREATE_URL?.trim() ||
-      'https://api.xiuxiu.meitu.com/v1/vip/subscription/order/create.json';
+    const maxPrice =
+      typeof input.maxPrice === 'number' && Number.isFinite(input.maxPrice)
+        ? input.maxPrice
+        : 1.1;
+    const isAndroid = input.channel === 'Android';
 
     try {
       await this.vipOverview(
         { accessToken, cookie: input.cookie },
         input.actorId,
       );
-
-      if (!isMobileChannel) {
-        const tx = await this.requestJson(h5TransactionUrl, {
-          method: 'POST',
-          headers: commonHeaders,
-          form: this.toStringRecord({ channel: input.channel }),
-        });
-        this.assertApiSuccess(tx.data);
-      }
-
-      const order = await this.requestJson(orderCreateUrl, {
-        method: 'POST',
-        headers: commonHeaders,
-        form: this.toStringRecord({ channel: input.channel }),
-      });
-      this.assertApiSuccess(order.data);
-
-      const priceValue = this.findFirstNumberValue(order.data, [
-        'price',
-        'amount',
-        'pay_amount',
-        'total_fee',
-      ]);
-
-      if (!Number.isFinite(priceValue)) {
+      const created = isAndroid
+        ? await this.createAndroidOrder(
+            {
+              channel: input.channel,
+              accessToken,
+              cookie: input.cookie,
+              actorId: input.actorId,
+            },
+            accessToken,
+          )
+        : await this.createH5Transaction(
+            {
+              channel: input.channel,
+              accessToken,
+              cookie: input.cookie,
+              actorId: input.actorId,
+            },
+            accessToken,
+          );
+      if (created.priceValue == null) {
         return {
           channel: input.channel,
           canRecharge: false,
@@ -853,17 +1134,19 @@ export class ExternalIntegrationService {
         };
       }
 
-      const canRecharge = Number(priceValue) <= 1.1;
+      const canRecharge = Number(created.priceValue) <= maxPrice;
       await this.logAction(input.actorId, 'EXTERNAL_CHANNEL_CAPABILITY_CHECK', {
         channel: input.channel,
+        mode: isAndroid ? 'android_order' : 'h5_transaction',
         canRecharge,
-        priceValue: Number(priceValue),
+        priceValue: Number(created.priceValue),
+        maxPrice,
       });
 
       return {
         channel: input.channel,
         canRecharge,
-        priceValue: Number(priceValue),
+        priceValue: Number(created.priceValue),
         reason: canRecharge ? 'OK' : 'RECHARGE_PRICE_NOT_ALLOWED',
       };
     } catch (error) {

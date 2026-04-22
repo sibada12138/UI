@@ -21,6 +21,7 @@ import { GenerateRechargeLinkDto } from './dto/generate-recharge-link.dto';
 import { CheckRechargeCapabilityDto } from './dto/check-recharge-capability.dto';
 
 const DEFAULT_CHANNELS: RechargeChannel[] = ['联想', '网页', 'Android'];
+const DEFAULT_PRICE_LIMIT = 1.1;
 
 type TaskWithSubmission = Prisma.RechargeTaskGetPayload<{
   include: {
@@ -49,6 +50,16 @@ export class RechargeService {
     return path.resolve(process.cwd(), './data/recharge-channels.txt');
   }
 
+  private getPriceFilePath() {
+    const configured = process.env.RECHARGE_PRICE_FILE?.trim();
+    if (configured) {
+      return path.isAbsolute(configured)
+        ? configured
+        : path.resolve(process.cwd(), configured);
+    }
+    return path.resolve(process.cwd(), './data/recharge-price.txt');
+  }
+
   private async ensureChannelsFile() {
     const filePath = this.getChannelsFilePath();
     const dir = path.dirname(filePath);
@@ -59,6 +70,33 @@ export class RechargeService {
       await fs.writeFile(filePath, `${DEFAULT_CHANNELS.join('\n')}\n`, 'utf8');
     }
     return filePath;
+  }
+
+  private async ensurePriceFile() {
+    const filePath = this.getPriceFilePath();
+    const dir = path.dirname(filePath);
+    await fs.mkdir(dir, { recursive: true });
+    try {
+      await fs.access(filePath);
+    } catch {
+      await fs.writeFile(filePath, `${DEFAULT_PRICE_LIMIT}\n`, 'utf8');
+    }
+    return filePath;
+  }
+
+  private sanitizePriceLimit(rawValue: string) {
+    const parsed = Number(String(rawValue ?? '').trim());
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      return DEFAULT_PRICE_LIMIT;
+    }
+    return Number(parsed.toFixed(2));
+  }
+
+  private async getPriceLimitValue() {
+    const filePath = await this.ensurePriceFile();
+    const content = await fs.readFile(filePath, 'utf8');
+    const [firstLine] = content.split(/\r?\n/g);
+    return this.sanitizePriceLimit(firstLine || '');
   }
 
   private sanitizeChannels(channelList: string[]) {
@@ -114,10 +152,10 @@ export class RechargeService {
     return Array.from(new Set(channels));
   }
 
-  private formatCapabilityMessage(results: ChannelCapabilityCheck[]) {
+  private formatCapabilityMessage(results: ChannelCapabilityCheck[], maxPrice: number) {
     const available = results.filter((item) => item.canRecharge);
     if (available.length === 0) {
-      return '未找到价格为 1.1 的可用渠道';
+      return `未找到价格不高于 ${maxPrice} 的可用渠道`;
     }
     return `可用渠道：${available
       .map((item) => `${item.channel}${item.priceValue != null ? `(${item.priceValue})` : ''}`)
@@ -155,6 +193,7 @@ export class RechargeService {
   private async checkTaskCapabilityCore(
     task: TaskWithSubmission,
     preferredChannel: string | undefined,
+    maxPrice: number,
     operatorId?: string,
   ) {
     const accessToken = this.getAccessTokenFromTask(task);
@@ -188,6 +227,7 @@ export class RechargeService {
         await this.externalIntegrationService.checkRechargeChannelCapability({
           channel,
           accessToken,
+          maxPrice,
           actorId: operatorId,
         });
       results.push(checked);
@@ -198,7 +238,7 @@ export class RechargeService {
       .map((item) => item.channel);
     const selectedChannel = availableChannels[0] ?? null;
     const selectedItem = results.find((item) => item.channel === selectedChannel);
-    const message = this.formatCapabilityMessage(results);
+    const message = this.formatCapabilityMessage(results, maxPrice);
 
     await this.prisma.rechargeTask.update({
       where: { id: task.id },
@@ -226,6 +266,7 @@ export class RechargeService {
   private async generateExternalLinkWithFallback(
     task: TaskWithSubmission,
     dto: GenerateRechargeLinkDto,
+    maxPrice: number,
     operatorId?: string,
   ) {
     const accessToken = this.getAccessTokenFromTask(task);
@@ -245,6 +286,7 @@ export class RechargeService {
           channel,
           accessToken,
           cookie: dto.cookie,
+          maxPrice,
           transactionPayload: dto.transactionPayload,
           orderPayload: dto.orderPayload,
           cashierPayload: dto.cashierPayload,
@@ -362,6 +404,7 @@ export class RechargeService {
       throw new BadRequestException('EXTERNAL_ACCESS_TOKEN_REQUIRED');
     }
 
+    const maxPrice = await this.getPriceLimitValue();
     const channelData = await this.listChannels();
     const channels =
       dto.checkAll === true
@@ -374,6 +417,7 @@ export class RechargeService {
           channel,
           accessToken,
           cookie: dto.cookie,
+          maxPrice,
           actorId: operatorId,
         });
       results.push(checked);
@@ -390,6 +434,7 @@ export class RechargeService {
           checkAll: dto.checkAll === true,
           channels,
           successCount: results.filter((item) => item.canRecharge).length,
+          maxPrice,
         },
       },
     });
@@ -412,6 +457,7 @@ export class RechargeService {
       throw new BadRequestException('TASK_IDS_REQUIRED');
     }
 
+    const maxPrice = await this.getPriceLimitValue();
     const tasks = await this.prisma.rechargeTask.findMany({
       where: { id: { in: uniqueTaskIds } },
       include: {
@@ -448,6 +494,7 @@ export class RechargeService {
       const checked = await this.checkTaskCapabilityCore(
         task,
         preferredChannel,
+        maxPrice,
         operatorId,
       );
       items.push(checked);
@@ -477,9 +524,11 @@ export class RechargeService {
       throw new NotFoundException('RECHARGE_TASK_NOT_FOUND');
     }
 
+    const maxPrice = await this.getPriceLimitValue();
     const generated = await this.generateExternalLinkWithFallback(
       task,
       dto,
+      maxPrice,
       operatorId,
     );
 
@@ -511,6 +560,7 @@ export class RechargeService {
           channel: generated.detail.channel,
           fallbackUsed: generated.detail.fallbackUsed,
           link: generated.rechargeLink,
+          maxPrice,
         },
       },
     });

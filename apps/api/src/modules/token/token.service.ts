@@ -81,19 +81,6 @@ export class TokenService {
     return `199${digits.padEnd(8, '0')}`;
   }
 
-  private isRetryableCaptchaError(message: string) {
-    if (!message) {
-      return false;
-    }
-    const lower = message.toLowerCase();
-    return (
-      lower.includes('captcha') ||
-      message.includes('验证码') ||
-      lower.includes('verify') ||
-      lower.includes('img')
-    );
-  }
-
   private isQrExpiredError(message: string) {
     if (!message) {
       return false;
@@ -314,51 +301,38 @@ export class TokenService {
       return { success: false, retryAfterSec: remainSec, message: 'SMS_WAIT' };
     }
 
-    let sessionToSave: SmsSession | null = null;
-    let solvedCaptcha = '';
-    let lastError: unknown = null;
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      try {
-        const bootstrap = await this.externalIntegrationService.smsBootstrap({});
-        solvedCaptcha = await this.captchaOcrService.recognizeCaptcha(
-          bootstrap.captchaBase64,
-        );
+    const bootstrap = await this.externalIntegrationService.smsBootstrap({});
+    const solvedCaptcha = await this.captchaOcrService.recognizeCaptcha(
+      bootstrap.captchaBase64,
+    );
 
-        await this.externalIntegrationService.smsSendCode({
-          unloginToken: bootstrap.unloginToken,
-          phone: normalizedPhone,
-          phoneCc: String(bootstrap.phoneCc ?? 86),
-          captcha: solvedCaptcha,
-          deviceId: bootstrap.deviceId,
-        });
-
-        sessionToSave = {
-          token: normalizedToken,
-          phone: normalizedPhone,
-          unloginToken: bootstrap.unloginToken,
-          phoneCc: String(bootstrap.phoneCc ?? 86),
-          deviceId: bootstrap.deviceId,
-          expiresAt: Date.now() + SMS_SESSION_TTL_MS,
-        };
-        break;
-      } catch (error) {
-        lastError = error;
-        const raw = error instanceof Error ? error.message : '';
-        if (!this.isRetryableCaptchaError(raw)) {
-          if (
-            raw !== 'EXTERNAL_NETWORK_ERROR' &&
-            !raw.startsWith('EXTERNAL_HTTP_5')
-          ) {
-            this.registerTokenSubmitFailure(submitIp);
-          }
-          throw error;
-        }
+    try {
+      await this.externalIntegrationService.smsSendCode({
+        unloginToken: bootstrap.unloginToken,
+        phone: normalizedPhone,
+        phoneCc: String(bootstrap.phoneCc ?? 86),
+        captcha: solvedCaptcha,
+        deviceId: bootstrap.deviceId,
+      });
+    } catch (error) {
+      const raw = error instanceof Error ? error.message : '';
+      if (
+        raw !== 'EXTERNAL_NETWORK_ERROR' &&
+        !raw.startsWith('EXTERNAL_HTTP_5')
+      ) {
+        this.registerTokenSubmitFailure(submitIp);
       }
+      throw error;
     }
 
-    if (!sessionToSave) {
-      throw new BadRequestException('CAPTCHA_AUTO_RECOGNIZE_FAILED');
-    }
+    const sessionToSave: SmsSession = {
+      token: normalizedToken,
+      phone: normalizedPhone,
+      unloginToken: bootstrap.unloginToken,
+      phoneCc: String(bootstrap.phoneCc ?? 86),
+      deviceId: bootstrap.deviceId,
+      expiresAt: Date.now() + SMS_SESSION_TTL_MS,
+    };
 
     const smsSessionId = createRandomToken('sms_');
     this.smsSessionMap.set(smsSessionId, sessionToSave);
