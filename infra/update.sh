@@ -186,6 +186,17 @@ show_status() {
   compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" ps
 }
 
+running_service_count() {
+  local count
+  count="$(compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" ps -q | grep -c . || true)"
+  printf '%s' "$count"
+}
+
+ensure_stack_up_no_build() {
+  log "未检测到变更，执行服务兜底拉起（redis/api/web）..."
+  compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" up -d redis api web
+}
+
 detect_need_api() {
   local files="$1"
   if [ -z "$files" ]; then
@@ -216,6 +227,9 @@ run_auto() {
     need_web=1
   elif [ -z "$CHANGED_FILES" ]; then
     log "未检测到代码更新，跳过构建。"
+    if [ "$(running_service_count)" = "0" ]; then
+      run_with_retry "stack-up-no-build" ensure_stack_up_no_build
+    fi
   else
     if detect_need_api "$CHANGED_FILES"; then need_api=1; fi
     if detect_need_web "$CHANGED_FILES"; then need_web=1; fi
