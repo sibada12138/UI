@@ -177,6 +177,16 @@ body {
   white-space: nowrap;
   padding: 12px 14px;
   border-bottom: 1px solid var(--card-border);
+  text-align: center;
+  vertical-align: middle;
+}
+
+.table-actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
 }
 
 .section-title {

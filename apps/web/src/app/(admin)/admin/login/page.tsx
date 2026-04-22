@@ -37,10 +37,10 @@ function AdminLoginPageContent() {
     <main className="min-h-screen bg-[var(--surface-accent)] px-4 py-10 text-[var(--page-text)] md:px-10 md:py-14">
       <div className="mx-auto flex max-w-5xl items-start justify-between gap-4">
         <div>
-          <p className="text-sm text-[var(--text-muted)]">XBK Design Console</p>
+          <p className="text-sm text-[var(--text-muted)]">管理系统登录</p>
           <h1 className="h-display mt-3 text-4xl font-semibold leading-[1.1] md:text-5xl">后台登录</h1>
           <p className="mt-4 max-w-xl text-sm text-[var(--text-muted)]">
-            登录后可访问主页、账户列表、待办中心、风控中心。所有管理功能均在登录后展示。
+            登录后可访问主页、账户列表、待办中心、风控中心与 API 中心。
           </p>
         </div>
       </div>
@@ -79,9 +79,6 @@ function AdminLoginPageContent() {
           <button className="btn-primary mt-2 w-full" type="submit" disabled={loading}>
             {loading ? "登录中..." : "登录后台"}
           </button>
-          <p className="text-xs text-[var(--text-subtle)]">
-            默认账号密码来自 `ADMIN_INIT_USERNAME / ADMIN_INIT_PASSWORD`。
-          </p>
           {message ? <p className="text-sm text-[var(--danger)]">{message}</p> : null}
         </form>
       </div>

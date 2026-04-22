@@ -4,9 +4,13 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { TokenStatus } from '@prisma/client';
+import * as QRCode from 'qrcode';
+import { PrismaService } from '../prisma/prisma.service';
+import { RiskControlService } from '../risk-control/risk-control.service';
+import { ExternalIntegrationService } from '../external-integration/external-integration.service';
 import { CreateTokenDto } from './dto/create-token.dto';
 import { SubmitTokenDto } from './dto/submit-token.dto';
-import { PrismaService } from '../prisma/prisma.service';
 import {
   createRandomToken,
   decryptText,
@@ -15,16 +19,49 @@ import {
   maskPhone,
   normalizePhone,
 } from '../../common/security/crypto.util';
-import { TokenStatus } from '@prisma/client';
-import { RiskControlService } from '../risk-control/risk-control.service';
+
+type SmsSession = {
+  token: string;
+  unloginToken: string;
+  phoneCc: string;
+  deviceId: string;
+  expiresAt: number;
+};
+
+type QrSession = {
+  token: string;
+  unloginToken: string;
+  qrCode: string;
+  deviceId: string;
+  expiresAt: number;
+  verified: boolean;
+  accessToken?: string;
+  uid?: string;
+};
+
+type LoginResolveResult = {
+  mode: 'sms' | 'qr';
+  credential: string;
+  accessToken: string;
+  uid?: string;
+};
+
+const SMS_SESSION_TTL_MS = 10 * 60 * 1000;
+const QR_SESSION_TTL_MS = 10 * 60 * 1000;
+const TOKEN_CLEANUP_INTERVAL_MS = 10 * 60 * 1000;
+const TOKEN_DELETE_AFTER_EXPIRED_MS = 24 * 60 * 60 * 1000;
 
 @Injectable()
 export class TokenService {
   private readonly smsCooldownMap = new Map<string, number>();
+  private readonly smsSessionMap = new Map<string, SmsSession>();
+  private readonly qrSessionMap = new Map<string, QrSession>();
+  private lastTokenCleanupAt = 0;
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly riskControlService: RiskControlService,
+    private readonly externalIntegrationService: ExternalIntegrationService,
   ) {}
 
   private registerTokenSubmitFailure(ip?: string) {
@@ -40,42 +77,170 @@ export class TokenService {
     }
   }
 
-  private getSmsCooldownKey(token: string, phone: string, ip?: string) {
-    return `${token}:${phone}:${ip ?? '127.0.0.1'}`;
-  }
-
-  async sendSmsCode(token: string, phone: string, submitIp?: string) {
-    this.ensureTokenSubmitAllowed(submitIp);
-
-    const normalizedToken = String(token ?? '').trim();
-    if (!/^tk_[a-zA-Z0-9_-]{8,}$/.test(normalizedToken)) {
+  private normalizeTokenOrThrow(token: string, submitIp?: string) {
+    const normalized = String(token ?? '').trim();
+    if (!/^tk_[a-zA-Z0-9_-]{8,}$/.test(normalized)) {
       this.registerTokenSubmitFailure(submitIp);
       throw new BadRequestException('TOKEN_INVALID');
     }
-    const normalizedPhone = normalizePhone(phone);
-    if (!/^1\d{10}$/.test(normalizedPhone)) {
-      throw new BadRequestException('PHONE_INVALID');
+    return normalized;
+  }
+
+  private cleanupAuthCache() {
+    const now = Date.now();
+    for (const [key, value] of this.smsSessionMap.entries()) {
+      if (value.expiresAt <= now) {
+        this.smsSessionMap.delete(key);
+      }
+    }
+    for (const [key, value] of this.qrSessionMap.entries()) {
+      if (value.expiresAt <= now) {
+        this.qrSessionMap.delete(key);
+      }
+    }
+    for (const [key, value] of this.smsCooldownMap.entries()) {
+      if (value <= now) {
+        this.smsCooldownMap.delete(key);
+      }
+    }
+  }
+
+  private async syncAndCleanupTokens(force = false) {
+    const now = Date.now();
+    if (!force && now - this.lastTokenCleanupAt < TOKEN_CLEANUP_INTERVAL_MS) {
+      return;
     }
 
+    this.lastTokenCleanupAt = now;
+    const nowDate = new Date(now);
+    const staleCutoff = new Date(now - TOKEN_DELETE_AFTER_EXPIRED_MS);
+
+    await this.prisma.issueToken.updateMany({
+      where: {
+        status: TokenStatus.active,
+        expiresAt: { lte: nowDate },
+      },
+      data: { status: TokenStatus.expired },
+    });
+
+    await this.prisma.issueToken.deleteMany({
+      where: {
+        status: TokenStatus.expired,
+        expiresAt: { lte: staleCutoff },
+      },
+    });
+  }
+
+  private async getActiveTokenOrThrow(token: string, submitIp?: string) {
     const issueToken = await this.prisma.issueToken.findUnique({
-      where: { token: normalizedToken },
+      where: { token },
     });
     if (!issueToken) {
       this.registerTokenSubmitFailure(submitIp);
       throw new NotFoundException('TOKEN_NOT_FOUND');
     }
-    if (issueToken.status !== TokenStatus.active) {
-      this.registerTokenSubmitFailure(submitIp);
-      throw new BadRequestException('TOKEN_INVALID');
+
+    if (issueToken.status === TokenStatus.active) {
+      if (issueToken.expiresAt.getTime() <= Date.now()) {
+        await this.prisma.issueToken.update({
+          where: { id: issueToken.id },
+          data: { status: TokenStatus.expired },
+        });
+        this.registerTokenSubmitFailure(submitIp);
+        throw new BadRequestException('TOKEN_EXPIRED');
+      }
+      return issueToken;
     }
-    if (issueToken.expiresAt.getTime() <= Date.now()) {
-      await this.prisma.issueToken.update({
-        where: { id: issueToken.id },
-        data: { status: TokenStatus.expired },
-      });
+
+    if (issueToken.status === TokenStatus.expired) {
       this.registerTokenSubmitFailure(submitIp);
       throw new BadRequestException('TOKEN_EXPIRED');
     }
+
+    this.registerTokenSubmitFailure(submitIp);
+    throw new BadRequestException('TOKEN_INVALID');
+  }
+
+  private getSmsCooldownKey(token: string, phone: string, ip?: string) {
+    return `${token}:${phone}:${ip ?? '127.0.0.1'}`;
+  }
+
+  private getSmsSessionOrThrow(sessionId: string, token: string) {
+    const normalizedId = String(sessionId ?? '').trim();
+    const session = this.smsSessionMap.get(normalizedId);
+    if (!session || session.expiresAt <= Date.now() || session.token !== token) {
+      throw new BadRequestException('SMS_SESSION_INVALID');
+    }
+    return session;
+  }
+
+  private getQrSessionOrThrow(sessionId: string, token: string) {
+    const normalizedId = String(sessionId ?? '').trim();
+    const session = this.qrSessionMap.get(normalizedId);
+    if (!session || session.expiresAt <= Date.now() || session.token !== token) {
+      throw new BadRequestException('QR_SESSION_INVALID');
+    }
+    return session;
+  }
+
+  async createSmsBootstrap(token: string, submitIp?: string) {
+    this.ensureTokenSubmitAllowed(submitIp);
+    this.cleanupAuthCache();
+    await this.syncAndCleanupTokens();
+
+    const normalizedToken = this.normalizeTokenOrThrow(token, submitIp);
+    const issueToken = await this.getActiveTokenOrThrow(normalizedToken, submitIp);
+
+    const bootstrap = await this.externalIntegrationService.smsBootstrap({});
+    const smsSessionId = createRandomToken('sms_');
+    this.smsSessionMap.set(smsSessionId, {
+      token: normalizedToken,
+      unloginToken: bootstrap.unloginToken,
+      phoneCc: String(bootstrap.phoneCc ?? 86),
+      deviceId: bootstrap.deviceId,
+      expiresAt: Date.now() + SMS_SESSION_TTL_MS,
+    });
+
+    await this.prisma.auditLog.create({
+      data: {
+        actorType: 'user',
+        action: 'TOKEN_SMS_BOOTSTRAP',
+        targetType: 'issue_token',
+        targetId: issueToken.id,
+      },
+    });
+
+    return {
+      smsSessionId,
+      phoneCc: String(bootstrap.phoneCc ?? 86),
+      captchaImageDataUrl: `data:${bootstrap.captchaMimeType};base64,${bootstrap.captchaBase64}`,
+      expiresInSec: Math.floor(SMS_SESSION_TTL_MS / 1000),
+    };
+  }
+
+  async sendSmsCode(
+    token: string,
+    phone: string,
+    captcha: string,
+    smsSessionId: string,
+    submitIp?: string,
+  ) {
+    this.ensureTokenSubmitAllowed(submitIp);
+    this.cleanupAuthCache();
+    await this.syncAndCleanupTokens();
+
+    const normalizedToken = this.normalizeTokenOrThrow(token, submitIp);
+    const normalizedPhone = normalizePhone(phone);
+    if (!/^1\d{10}$/.test(normalizedPhone)) {
+      throw new BadRequestException('PHONE_INVALID');
+    }
+    const captchaCode = String(captcha ?? '').trim();
+    if (!captchaCode) {
+      throw new BadRequestException('CAPTCHA_REQUIRED');
+    }
+
+    const issueToken = await this.getActiveTokenOrThrow(normalizedToken, submitIp);
+    const session = this.getSmsSessionOrThrow(smsSessionId, normalizedToken);
 
     const cooldownKey = this.getSmsCooldownKey(
       normalizedToken,
@@ -87,6 +252,22 @@ export class TokenService {
     if (nextAllowedAt > now) {
       const remainSec = Math.max(1, Math.ceil((nextAllowedAt - now) / 1000));
       return { success: false, retryAfterSec: remainSec, message: 'SMS_WAIT' };
+    }
+
+    try {
+      await this.externalIntegrationService.smsSendCode({
+        unloginToken: session.unloginToken,
+        phone: normalizedPhone,
+        phoneCc: session.phoneCc,
+        captcha: captchaCode,
+        deviceId: session.deviceId,
+      });
+    } catch (error) {
+      const raw = error instanceof Error ? error.message : '';
+      if (raw !== 'EXTERNAL_NETWORK_ERROR' && !raw.startsWith('EXTERNAL_HTTP_5')) {
+        this.registerTokenSubmitFailure(submitIp);
+      }
+      throw error;
     }
 
     this.smsCooldownMap.set(cooldownKey, now + 60 * 1000);
@@ -110,8 +291,96 @@ export class TokenService {
     };
   }
 
+  async createQrSession(token: string, submitIp?: string) {
+    this.ensureTokenSubmitAllowed(submitIp);
+    this.cleanupAuthCache();
+    await this.syncAndCleanupTokens();
+
+    const normalizedToken = this.normalizeTokenOrThrow(token, submitIp);
+    await this.getActiveTokenOrThrow(normalizedToken, submitIp);
+
+    const qr = await this.externalIntegrationService.qrCreate({});
+    const qrSessionId = createRandomToken('qr_');
+    const qrImageDataUrl = await QRCode.toDataURL(qr.qrCode);
+    this.qrSessionMap.set(qrSessionId, {
+      token: normalizedToken,
+      unloginToken: qr.unloginToken,
+      qrCode: qr.qrCode,
+      deviceId: qr.deviceId,
+      verified: false,
+      expiresAt: Date.now() + QR_SESSION_TTL_MS,
+    });
+
+    return {
+      qrSessionId,
+      qrCode: qr.qrCode,
+      qrImageDataUrl,
+      expiresInSec: Math.floor(QR_SESSION_TTL_MS / 1000),
+    };
+  }
+
+  async getQrStatus(sessionId: string, submitIp?: string) {
+    this.ensureTokenSubmitAllowed(submitIp);
+    this.cleanupAuthCache();
+
+    const normalizedId = String(sessionId ?? '').trim();
+    const session = this.qrSessionMap.get(normalizedId);
+    if (!session || session.expiresAt <= Date.now()) {
+      throw new BadRequestException('QR_SESSION_INVALID');
+    }
+
+    const raw = await this.externalIntegrationService.qrStatus({
+      qrCode: session.qrCode,
+      unloginToken: session.unloginToken,
+      deviceId: session.deviceId,
+    });
+
+    return {
+      qrSessionId: normalizedId,
+      verified: session.verified,
+      raw,
+    };
+  }
+
+  async loginByQr(token: string, qrSessionId: string, submitIp?: string) {
+    this.ensureTokenSubmitAllowed(submitIp);
+    this.cleanupAuthCache();
+    await this.syncAndCleanupTokens();
+
+    const normalizedToken = this.normalizeTokenOrThrow(token, submitIp);
+    await this.getActiveTokenOrThrow(normalizedToken, submitIp);
+    const session = this.getQrSessionOrThrow(qrSessionId, normalizedToken);
+
+    const result = await this.externalIntegrationService.qrLogin({
+      qrCode: session.qrCode,
+      unloginToken: session.unloginToken,
+      deviceId: session.deviceId,
+    });
+
+    const qrAccessToken = String(result.accessToken ?? '').trim();
+    if (!qrAccessToken) {
+      throw new BadRequestException('EXTERNAL_LOGIN_FAILED');
+    }
+
+    this.qrSessionMap.set(qrSessionId, {
+      ...session,
+      verified: true,
+      accessToken: qrAccessToken,
+      uid: result.uid ? String(result.uid) : undefined,
+      expiresAt: Date.now() + QR_SESSION_TTL_MS,
+    });
+    this.riskControlService.resetFailure('token_submit', submitIp);
+
+    return {
+      success: true,
+      qrSessionId,
+      uid: result.uid ?? null,
+    };
+  }
+
   async createToken(dto: CreateTokenDto, createdBy?: string) {
-    const expiresInMinutes = dto.expiresInMinutes ?? 30;
+    await this.syncAndCleanupTokens(true);
+    const expiresInMinutes = dto.expiresInMinutes ?? 60;
     const token = createRandomToken('tk_');
     const expiresAt = new Date(Date.now() + expiresInMinutes * 60 * 1000);
     const issueToken = await this.prisma.issueToken.create({
@@ -137,9 +406,10 @@ export class TokenService {
   }
 
   async listTokens() {
+    await this.syncAndCleanupTokens(true);
     const tokens = await this.prisma.issueToken.findMany({
       orderBy: { createdAt: 'desc' },
-      take: 100,
+      take: 200,
     });
     return {
       items: tokens,
@@ -169,6 +439,7 @@ export class TokenService {
   }
 
   async unbanToken(id: string) {
+    await this.syncAndCleanupTokens(true);
     const token = await this.prisma.issueToken.findFirst({
       where: { OR: [{ id }, { token: id }] },
     });
@@ -201,6 +472,7 @@ export class TokenService {
   }
 
   async getTokenStatus(token: string) {
+    await this.syncAndCleanupTokens(true);
     const issueToken = await this.prisma.issueToken.findUnique({
       where: { token },
       include: {
@@ -215,17 +487,6 @@ export class TokenService {
     });
     if (!issueToken) {
       throw new NotFoundException('TOKEN_NOT_FOUND');
-    }
-
-    const isExpired =
-      issueToken.status === TokenStatus.active &&
-      issueToken.expiresAt.getTime() <= Date.now();
-    if (isExpired) {
-      await this.prisma.issueToken.update({
-        where: { id: issueToken.id },
-        data: { status: TokenStatus.expired },
-      });
-      issueToken.status = TokenStatus.expired;
     }
 
     const latestSubmission = issueToken.submissions[0];
@@ -253,6 +514,54 @@ export class TokenService {
     };
   }
 
+  private async resolveLogin(
+    normalizedToken: string,
+    dto: SubmitTokenDto,
+  ): Promise<LoginResolveResult> {
+    const mode = dto.loginMode === 'qr' ? 'qr' : 'sms';
+    if (mode === 'qr') {
+      if (!dto.qrSessionId) {
+        throw new BadRequestException('QR_SESSION_REQUIRED');
+      }
+      const qrSession = this.getQrSessionOrThrow(dto.qrSessionId, normalizedToken);
+      if (!qrSession.verified || !qrSession.accessToken) {
+        throw new BadRequestException('QR_LOGIN_REQUIRED');
+      }
+      return {
+        mode: 'qr',
+        credential: `QR:${qrSession.uid ?? 'verified'}`,
+        accessToken: qrSession.accessToken,
+        uid: qrSession.uid,
+      };
+    }
+
+    const smsCode = String(dto.smsCode ?? '').trim();
+    if (!smsCode) {
+      throw new BadRequestException('SMSCODE_INVALID');
+    }
+    if (!dto.smsSessionId) {
+      throw new BadRequestException('SMS_SESSION_REQUIRED');
+    }
+    const smsSession = this.getSmsSessionOrThrow(dto.smsSessionId, normalizedToken);
+    const loginResult = await this.externalIntegrationService.smsLogin({
+      unloginToken: smsSession.unloginToken,
+      phone: dto.phone,
+      phoneCc: smsSession.phoneCc,
+      verifyCode: smsCode,
+      deviceId: smsSession.deviceId,
+    });
+    const smsAccessToken = String(loginResult.accessToken ?? '').trim();
+    if (!smsAccessToken) {
+      throw new BadRequestException('EXTERNAL_LOGIN_FAILED');
+    }
+    return {
+      mode: 'sms',
+      credential: smsCode,
+      accessToken: smsAccessToken,
+      uid: loginResult.uid ? String(loginResult.uid) : undefined,
+    };
+  }
+
   async submitToken(
     token: string,
     dto: SubmitTokenDto,
@@ -260,42 +569,28 @@ export class TokenService {
     userAgent?: string,
   ) {
     this.ensureTokenSubmitAllowed(submitIp);
+    this.cleanupAuthCache();
+    await this.syncAndCleanupTokens();
 
-    const normalizedToken = String(token ?? '').trim();
-    if (!normalizedToken) {
-      this.registerTokenSubmitFailure(submitIp);
-      throw new BadRequestException('TOKEN_REQUIRED');
-    }
-    if (!/^tk_[a-zA-Z0-9_-]{8,}$/.test(normalizedToken)) {
-      this.registerTokenSubmitFailure(submitIp);
-      throw new BadRequestException('TOKEN_INVALID');
-    }
-
+    const normalizedToken = this.normalizeTokenOrThrow(token, submitIp);
     const normalizedPhone = normalizePhone(dto.phone);
     if (!/^1\d{10}$/.test(normalizedPhone)) {
       throw new BadRequestException('PHONE_INVALID');
     }
-    const issueToken = await this.prisma.issueToken.findUnique({
-      where: { token: normalizedToken },
-    });
-    if (!issueToken) {
-      this.registerTokenSubmitFailure(submitIp);
-      throw new NotFoundException('TOKEN_NOT_FOUND');
-    }
-    if (issueToken.status !== TokenStatus.active) {
-      this.registerTokenSubmitFailure(submitIp);
-      throw new BadRequestException('TOKEN_INVALID');
-    }
-    if (issueToken.expiresAt.getTime() <= Date.now()) {
-      await this.prisma.issueToken.update({
-        where: { id: issueToken.id },
-        data: { status: TokenStatus.expired },
-      });
-      this.registerTokenSubmitFailure(submitIp);
-      throw new BadRequestException('TOKEN_EXPIRED');
+
+    const issueToken = await this.getActiveTokenOrThrow(normalizedToken, submitIp);
+    let login: LoginResolveResult;
+    try {
+      login = await this.resolveLogin(normalizedToken, dto);
+    } catch (error) {
+      const raw = error instanceof Error ? error.message : '';
+      if (raw !== 'EXTERNAL_NETWORK_ERROR' && !raw.startsWith('EXTERNAL_HTTP_5')) {
+        this.registerTokenSubmitFailure(submitIp);
+      }
+      throw error;
     }
 
-    let result: { submissionId: string; issueTokenId: string };
+    let result: { submissionId: string };
     try {
       result = await this.prisma.$transaction(async (tx) => {
         const consumeResult = await tx.issueToken.updateMany({
@@ -311,7 +606,7 @@ export class TokenService {
             issueTokenId: issueToken.id,
             phoneHash: hashPlainText(normalizedPhone),
             phoneEnc: encryptText(normalizedPhone),
-            smsCodeEnc: encryptText(dto.smsCode),
+            smsCodeEnc: encryptText(login.credential),
             submitIp: submitIp?.slice(0, 64),
             userAgent: userAgent?.slice(0, 255),
           },
@@ -327,10 +622,13 @@ export class TokenService {
             targetId: issueToken.id,
             metadataJson: {
               phoneMasked: maskPhone(normalizedPhone),
+              loginMode: login.mode,
+              uid: login.uid ?? null,
+              hasAccessToken: Boolean(login.accessToken),
             },
           },
         });
-        return { submissionId: submission.id, issueTokenId: issueToken.id };
+        return { submissionId: submission.id };
       });
     } catch (error) {
       if (
@@ -342,6 +640,12 @@ export class TokenService {
       throw error;
     }
 
+    if (dto.smsSessionId) {
+      this.smsSessionMap.delete(dto.smsSessionId);
+    }
+    if (dto.qrSessionId) {
+      this.qrSessionMap.delete(dto.qrSessionId);
+    }
     this.riskControlService.resetFailure('token_submit', submitIp);
 
     return {
@@ -349,6 +653,7 @@ export class TokenService {
       token: normalizedToken,
       phoneMasked: maskPhone(normalizedPhone),
       status: TokenStatus.consumed,
+      loginMode: login.mode,
       submissionId: result.submissionId,
     };
   }

@@ -4,6 +4,9 @@ import { SubmitTokenDto } from './dto/submit-token.dto';
 import { SubmitTokenBodyDto } from './dto/submit-token-body.dto';
 import { SendSmsCodeDto } from './dto/send-sms-code.dto';
 import { SendSmsCodeBodyDto } from './dto/send-sms-code-body.dto';
+import { SmsBootstrapBodyDto } from './dto/sms-bootstrap-body.dto';
+import { QrCreateBodyDto } from './dto/qr-create-body.dto';
+import { QrLoginBodyDto } from './dto/qr-login-body.dto';
 import { Public } from '../../common/auth/public.decorator';
 
 @Public()
@@ -34,7 +37,22 @@ export class PublicTokenController {
     @Headers('x-forwarded-for') xForwardedFor?: string,
   ) {
     const ip = xForwardedFor?.split(',')[0]?.trim() ?? '127.0.0.1';
-    return this.tokenService.sendSmsCode(token, dto.phone, ip);
+    return this.tokenService.sendSmsCode(
+      token,
+      dto.phone,
+      dto.captcha,
+      dto.smsSessionId,
+      ip,
+    );
+  }
+
+  @Post('sms/bootstrap')
+  smsBootstrap(
+    @Body() dto: SmsBootstrapBodyDto,
+    @Headers('x-forwarded-for') xForwardedFor?: string,
+  ) {
+    const ip = xForwardedFor?.split(',')[0]?.trim() ?? '127.0.0.1';
+    return this.tokenService.createSmsBootstrap(dto.token, ip);
   }
 
   @Post('submit')
@@ -58,6 +76,39 @@ export class PublicTokenController {
     @Headers('x-forwarded-for') xForwardedFor?: string,
   ) {
     const ip = xForwardedFor?.split(',')[0]?.trim() ?? '127.0.0.1';
-    return this.tokenService.sendSmsCode(dto.token, dto.phone, ip);
+    return this.tokenService.sendSmsCode(
+      dto.token,
+      dto.phone,
+      dto.captcha,
+      dto.smsSessionId,
+      ip,
+    );
+  }
+
+  @Post('qr/create')
+  qrCreate(
+    @Body() dto: QrCreateBodyDto,
+    @Headers('x-forwarded-for') xForwardedFor?: string,
+  ) {
+    const ip = xForwardedFor?.split(',')[0]?.trim() ?? '127.0.0.1';
+    return this.tokenService.createQrSession(dto.token, ip);
+  }
+
+  @Get('qr/:sessionId/status')
+  qrStatus(
+    @Param('sessionId') sessionId: string,
+    @Headers('x-forwarded-for') xForwardedFor?: string,
+  ) {
+    const ip = xForwardedFor?.split(',')[0]?.trim() ?? '127.0.0.1';
+    return this.tokenService.getQrStatus(sessionId, ip);
+  }
+
+  @Post('qr/login')
+  qrLogin(
+    @Body() dto: QrLoginBodyDto,
+    @Headers('x-forwarded-for') xForwardedFor?: string,
+  ) {
+    const ip = xForwardedFor?.split(',')[0]?.trim() ?? '127.0.0.1';
+    return this.tokenService.loginByQr(dto.token, dto.qrSessionId, ip);
   }
 }

@@ -20,7 +20,9 @@ export class DashboardService {
       totalQueries,
       failedQueries,
     ] = await Promise.all([
-      this.prisma.issueToken.count({ where: { status: TokenStatus.active } }),
+      this.prisma.issueToken.count({
+        where: { status: TokenStatus.active, expiresAt: { gt: new Date() } },
+      }),
       this.prisma.userSubmission.count({
         where: { submittedAt: { gte: todayStart } },
       }),

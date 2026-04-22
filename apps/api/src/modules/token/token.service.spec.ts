@@ -15,7 +15,13 @@ async function clearDb(prisma: PrismaService) {
 describe('TokenService', () => {
   const prisma = new PrismaService();
   const riskControl = new RiskControlService();
-  const service = new TokenService(prisma, riskControl);
+  const externalMock = {
+    smsLogin: jest.fn(async () => ({
+      accessToken: 'mock_access_token',
+      uid: 'mock_uid',
+    })),
+  } as any;
+  const service = new TokenService(prisma, riskControl, externalMock);
 
   beforeAll(async () => {
     await prisma.$connect();
@@ -33,10 +39,19 @@ describe('TokenService', () => {
   it('consumes token once after successful submit', async () => {
     const created = await service.createToken({ expiresInMinutes: 30 });
     const token = created.token;
+    const smsSessionId = 'sms_test_session';
+    (service as any).smsSessionMap.set(smsSessionId, {
+      token,
+      unloginToken: 'mock_unlogin',
+      phoneCc: '86',
+      deviceId: 'mock_device',
+      expiresAt: Date.now() + 60_000,
+    });
 
     const first = await service.submitToken(token, {
       phone: '13800138000',
       smsCode: '123456',
+      smsSessionId,
     });
     expect(first.success).toBe(true);
     expect(first.status).toBe('consumed');
@@ -45,6 +60,7 @@ describe('TokenService', () => {
       service.submitToken(token, {
         phone: '13800138000',
         smsCode: '123456',
+        smsSessionId,
       }),
     ).rejects.toThrow('TOKEN_INVALID');
   });
@@ -92,5 +108,13 @@ describe('TokenService', () => {
 
     const unbanned = await service.unbanToken(created.id);
     expect(unbanned.status).toBe('active');
+  });
+
+  it('uses 60 minutes as default token ttl', async () => {
+    const before = Date.now();
+    const created = await service.createToken({});
+    const ttlMs = new Date(created.expiresAt).getTime() - before;
+    expect(ttlMs).toBeGreaterThanOrEqual(59 * 60 * 1000);
+    expect(ttlMs).toBeLessThanOrEqual(61 * 60 * 1000);
   });
 });

@@ -145,6 +145,13 @@ export class QueryService {
       tokenId = token.id;
       tokenValue = token.token;
       tokenStatus = token.status;
+      if (token.status === 'active' && token.expiresAt.getTime() <= Date.now()) {
+        await this.prisma.issueToken.update({
+          where: { id: token.id },
+          data: { status: 'expired' },
+        });
+        tokenStatus = 'expired';
+      }
       const submission = token.submissions[0];
       if (submission) {
         phoneMasked = maskPhone(
@@ -187,6 +194,16 @@ export class QueryService {
       tokenId = submission.issueToken.id;
       tokenValue = submission.issueToken.token;
       tokenStatus = submission.issueToken.status;
+      if (
+        submission.issueToken.status === 'active' &&
+        submission.issueToken.expiresAt.getTime() <= Date.now()
+      ) {
+        await this.prisma.issueToken.update({
+          where: { id: submission.issueToken.id },
+          data: { status: 'expired' },
+        });
+        tokenStatus = 'expired';
+      }
       phoneMasked = maskPhone(normalized);
       latestUpdatedAt = submission.submittedAt;
       const task = submission.rechargeTasks[0];

@@ -1,32 +1,46 @@
 "use client";
 
 import Link from "next/link";
+import { useEffect } from "react";
 import { usePathname, useRouter } from "next/navigation";
-import { clearAdminToken } from "@/lib/admin-auth";
+import { clearAdminToken, getAdminToken } from "@/lib/admin-auth";
 
 const navItems = [
   { href: "/admin/dashboard", label: "主页" },
   { href: "/admin/accounts", label: "账户列表" },
   { href: "/admin/todo", label: "待办中心" },
   { href: "/admin/risk", label: "风控中心" },
+  { href: "/admin/api-center", label: "API 中心" },
 ];
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
   const isLoginPage = pathname === "/admin/login";
+  const hasToken = typeof window !== "undefined" && getAdminToken().trim().length > 0;
+
+  useEffect(() => {
+    if (!isLoginPage && !hasToken) {
+      clearAdminToken();
+      router.replace("/admin/login");
+    }
+  }, [hasToken, isLoginPage, router]);
 
   if (isLoginPage) {
     return <>{children}</>;
+  }
+
+  if (!hasToken) {
+    return <main className="min-h-screen bg-[var(--page-bg)]" />;
   }
 
   return (
     <div className="admin-shell">
       <aside className="admin-sidebar">
         <div>
-          <p className="text-xs uppercase tracking-[0.2em] text-[var(--text-subtle)]">XBK Console</p>
+          <p className="text-xs uppercase tracking-[0.2em] text-[var(--text-subtle)]">Operation Console</p>
           <h1 className="h-display mt-2 text-2xl font-semibold text-[var(--page-text)]">CDK 发卡后台</h1>
-          <p className="mt-2 text-xs text-[var(--text-muted)]">登录后统一处理账户、CDK、待办与风控。</p>
+          <p className="mt-2 text-xs text-[var(--text-muted)]">统一处理账户、CDK、待办与风控。</p>
         </div>
 
         <nav className="mt-8 grid gap-2">
@@ -42,8 +56,8 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
         </nav>
 
         <div className="mt-auto rounded-[12px] border border-[var(--card-border)] bg-[var(--card-bg-soft)] p-4 text-xs text-[var(--text-muted)]">
-          <p>CDK 默认有效期 30 分钟。</p>
-          <p className="mt-1">用户提交成功后 CDK 立即失效，后台保留可追溯记录。</p>
+          <p>CDK 默认有效期 1 小时。</p>
+          <p className="mt-1">过期记录保留 24 小时后自动清理。</p>
         </div>
       </aside>
 

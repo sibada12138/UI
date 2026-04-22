@@ -4,6 +4,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { adminApiRequest } from "@/lib/admin-api";
 import { toErrorMessage } from "@/lib/error-message";
+import { pushToast } from "@/lib/toast";
 
 type BanItem = {
   scope: "query" | "token_submit";
@@ -39,7 +40,9 @@ export default function RiskPage() {
       setIpBans(ipData.items);
       setCdks(cdkData.items);
     } catch (error) {
-      setMessage(toErrorMessage(error, "加载风控数据失败"));
+      const text = toErrorMessage(error, "加载风控数据失败");
+      setMessage(text);
+      pushToast({ type: "error", message: text });
     }
   }
 
@@ -54,9 +57,12 @@ export default function RiskPage() {
         method: "POST",
         body: { scope: item.scope, ip: item.ip },
       });
+      pushToast({ type: "success", message: "IP 已解封。" });
       await load();
     } catch (error) {
-      setMessage(toErrorMessage(error, "IP 解封失败"));
+      const text = toErrorMessage(error, "IP 解封失败");
+      setMessage(text);
+      pushToast({ type: "error", message: text });
     }
   }
 
@@ -66,9 +72,12 @@ export default function RiskPage() {
       await adminApiRequest(`/admin/tokens/${id}/revoke`, {
         method: "POST",
       });
+      pushToast({ type: "success", message: "CDK 已封禁。" });
       await load();
     } catch (error) {
-      setMessage(toErrorMessage(error, "CDK 封禁失败"));
+      const text = toErrorMessage(error, "CDK 封禁失败");
+      setMessage(text);
+      pushToast({ type: "error", message: text });
     }
   }
 
@@ -78,9 +87,12 @@ export default function RiskPage() {
       await adminApiRequest(`/admin/tokens/${id}/unban`, {
         method: "POST",
       });
+      pushToast({ type: "success", message: "CDK 已解封。" });
       await load();
     } catch (error) {
-      setMessage(toErrorMessage(error, "CDK 解封失败"));
+      const text = toErrorMessage(error, "CDK 解封失败");
+      setMessage(text);
+      pushToast({ type: "error", message: text });
     }
   }
 
@@ -152,16 +164,18 @@ export default function RiskPage() {
                   <td className="font-mono">{item.token}</td>
                   <td>{item.status}</td>
                   <td>{new Date(item.expiresAt).toLocaleString()}</td>
-                  <td className="flex gap-2">
-                    {item.status !== "revoked" ? (
-                      <button className="btn-pill" onClick={() => void banCdk(item.id)} type="button">
-                        封禁 CDK
-                      </button>
-                    ) : (
-                      <button className="btn-primary" onClick={() => void unbanCdk(item.id)} type="button">
-                        解封 CDK
-                      </button>
-                    )}
+                  <td>
+                    <div className="table-actions">
+                      {item.status !== "revoked" ? (
+                        <button className="btn-pill" onClick={() => void banCdk(item.id)} type="button">
+                          封禁 CDK
+                        </button>
+                      ) : (
+                        <button className="btn-primary" onClick={() => void unbanCdk(item.id)} type="button">
+                          解封 CDK
+                        </button>
+                      )}
+                    </div>
                   </td>
                 </tr>
               ))}

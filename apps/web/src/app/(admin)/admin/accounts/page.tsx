@@ -4,6 +4,7 @@
 import { FormEvent, useEffect, useState } from "react";
 import { adminApiRequest } from "@/lib/admin-api";
 import { toErrorMessage } from "@/lib/error-message";
+import { pushToast } from "@/lib/toast";
 
 type AccountItem = {
   id: string;
@@ -24,6 +25,16 @@ type AdminUser = {
   createdAt: string;
 };
 
+function statusLabel(status: string) {
+  if (status === "completed") return "已开";
+  if (status === "pending") return "待处理";
+  if (status === "link_generated") return "待充值";
+  if (status === "processing") return "充值中";
+  if (status === "failed") return "失败";
+  if (status === "cancelled") return "已取消";
+  return status;
+}
+
 export default function AccountsPage() {
   const [accounts, setAccounts] = useState<AccountItem[]>([]);
   const [admins, setAdmins] = useState<AdminUser[]>([]);
@@ -42,7 +53,9 @@ export default function AccountsPage() {
       setAccounts(taskData.items);
       setAdmins(adminData.items);
     } catch (error) {
-      setMessage(toErrorMessage(error, "加载账户数据失败"));
+      const text = toErrorMessage(error, "加载账户数据失败");
+      setMessage(text);
+      pushToast({ type: "error", message: text });
     }
   }
 
@@ -61,9 +74,12 @@ export default function AccountsPage() {
       setUsername("");
       setPassword("");
       setRole("operator_admin");
+      pushToast({ type: "success", message: "管理员创建成功。" });
       await load();
     } catch (error) {
-      setMessage(toErrorMessage(error, "创建管理员失败"));
+      const text = toErrorMessage(error, "创建管理员失败");
+      setMessage(text);
+      pushToast({ type: "error", message: text });
     }
   }
 
@@ -96,7 +112,7 @@ export default function AccountsPage() {
                   <td className="font-mono">{item.smsCode}</td>
                   <td className="font-mono">{item.token}</td>
                   <td>
-                    <span className="status-pill">{item.status}</span>
+                    <span className="status-pill">{statusLabel(item.status)}</span>
                   </td>
                   <td>{new Date(item.submittedAt).toLocaleString()}</td>
                   <td>{new Date(item.updatedAt).toLocaleString()}</td>

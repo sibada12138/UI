@@ -1,21 +1,12 @@
 import { IsNotEmpty, IsString, Matches, MaxLength } from 'class-validator';
 
-export class SendSmsCodeBodyDto {
+export class QrLoginBodyDto {
   @IsString()
   @Matches(/^tk_[a-zA-Z0-9_-]{8,}$/)
   token!: string;
 
   @IsString()
-  @Matches(/^1\d{10}$/)
-  phone!: string;
-
-  @IsString()
-  @IsNotEmpty()
-  @MaxLength(16)
-  captcha!: string;
-
-  @IsString()
   @IsNotEmpty()
   @MaxLength(64)
-  smsSessionId!: string;
+  qrSessionId!: string;
 }
