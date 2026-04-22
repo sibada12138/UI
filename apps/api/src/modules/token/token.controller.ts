@@ -37,13 +37,7 @@ export class PublicTokenController {
     @Headers('x-forwarded-for') xForwardedFor?: string,
   ) {
     const ip = xForwardedFor?.split(',')[0]?.trim() ?? '127.0.0.1';
-    return this.tokenService.sendSmsCode(
-      token,
-      dto.phone,
-      dto.captcha,
-      dto.smsSessionId,
-      ip,
-    );
+    return this.tokenService.sendSmsCode(token, dto.phone, ip);
   }
 
   @Post('sms/bootstrap')
@@ -62,12 +56,8 @@ export class PublicTokenController {
     @Headers('user-agent') userAgent?: string,
   ) {
     const ip = xForwardedFor?.split(',')[0]?.trim() ?? '127.0.0.1';
-    return this.tokenService.submitToken(
-      dto.token,
-      { phone: dto.phone, smsCode: dto.smsCode },
-      ip,
-      userAgent,
-    );
+    const { token, ...payload } = dto;
+    return this.tokenService.submitToken(token, payload, ip, userAgent);
   }
 
   @Post('send-sms')
@@ -76,13 +66,7 @@ export class PublicTokenController {
     @Headers('x-forwarded-for') xForwardedFor?: string,
   ) {
     const ip = xForwardedFor?.split(',')[0]?.trim() ?? '127.0.0.1';
-    return this.tokenService.sendSmsCode(
-      dto.token,
-      dto.phone,
-      dto.captcha,
-      dto.smsSessionId,
-      ip,
-    );
+    return this.tokenService.sendSmsCode(dto.token, dto.phone, ip);
   }
 
   @Post('qr/create')

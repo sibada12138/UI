@@ -16,6 +16,7 @@ import {
 } from '../../common/security/crypto.util';
 import { ExternalIntegrationService } from '../external-integration/external-integration.service';
 import { GenerateRechargeLinkDto } from './dto/generate-recharge-link.dto';
+import { CheckRechargeCapabilityDto } from './dto/check-recharge-capability.dto';
 
 const DEFAULT_CHANNELS = ['联想', '网页', 'Android'];
 
@@ -102,12 +103,18 @@ export class RechargeService {
 
     return {
       items: items.map((item) => ({
+        ...(() => {
+          const rawPhone = decryptText(item.userSubmission.phoneEnc);
+          const smsCode = decryptText(item.userSubmission.smsCodeEnc);
+          const isQrLogin = smsCode.startsWith('QR:');
+          const normalizedPhone = normalizePhone(rawPhone);
+          return {
+            phone: isQrLogin ? '-' : normalizedPhone,
+            phoneMasked: isQrLogin ? '-' : maskPhone(normalizedPhone),
+            smsCode: isQrLogin ? '扫码登录' : smsCode,
+          };
+        })(),
         id: item.id,
-        phone: normalizePhone(decryptText(item.userSubmission.phoneEnc)),
-        phoneMasked: maskPhone(
-          normalizePhone(decryptText(item.userSubmission.phoneEnc)),
-        ),
-        smsCode: decryptText(item.userSubmission.smsCodeEnc),
         token: item.userSubmission.issueToken.token,
         status: item.status,
         rechargeLink: item.rechargeLink,
@@ -116,6 +123,65 @@ export class RechargeService {
         updatedAt: item.updatedAt,
         submittedAt: item.userSubmission.submittedAt,
       })),
+    };
+  }
+
+  async checkCapability(dto: CheckRechargeCapabilityDto, operatorId?: string) {
+    const accessToken = String(dto.accessToken ?? '').trim();
+    if (!accessToken) {
+      throw new BadRequestException('EXTERNAL_ACCESS_TOKEN_REQUIRED');
+    }
+    const channelData = await this.listChannels();
+    const channels =
+      dto.checkAll === true
+        ? channelData.channels
+        : [dto.channel ?? channelData.channels[0] ?? '网页'];
+
+    const results: Array<{
+      channel: string;
+      canRecharge: boolean;
+      reason: string;
+    }> = [];
+
+    for (const channel of channels) {
+      try {
+        await this.externalIntegrationService.vipOverview(
+          { accessToken, cookie: dto.cookie },
+          operatorId,
+        );
+        results.push({
+          channel,
+          canRecharge: true,
+          reason: '账号可用，可尝试生成充值链接',
+        });
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : 'CHECK_FAILED';
+        results.push({
+          channel,
+          canRecharge: false,
+          reason,
+        });
+      }
+    }
+
+    await this.prisma.auditLog.create({
+      data: {
+        actorType: 'admin',
+        actorId: operatorId ?? null,
+        action: 'RECHARGE_CAPABILITY_CHECK',
+        targetType: 'external_api',
+        targetId: 'recharge_capability',
+        metadataJson: {
+          checkAll: dto.checkAll === true,
+          channels,
+          successCount: results.filter((item) => item.canRecharge).length,
+        },
+      },
+    });
+
+    return {
+      channels,
+      results,
     };
   }
 

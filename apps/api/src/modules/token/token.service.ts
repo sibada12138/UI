@@ -9,6 +9,7 @@ import * as QRCode from 'qrcode';
 import { PrismaService } from '../prisma/prisma.service';
 import { RiskControlService } from '../risk-control/risk-control.service';
 import { ExternalIntegrationService } from '../external-integration/external-integration.service';
+import { CaptchaOcrService } from './captcha-ocr.service';
 import { CreateTokenDto } from './dto/create-token.dto';
 import { SubmitTokenDto } from './dto/submit-token.dto';
 import {
@@ -22,6 +23,7 @@ import {
 
 type SmsSession = {
   token: string;
+  phone: string;
   unloginToken: string;
   phoneCc: string;
   deviceId: string;
@@ -47,7 +49,7 @@ type LoginResolveResult = {
 };
 
 const SMS_SESSION_TTL_MS = 10 * 60 * 1000;
-const QR_SESSION_TTL_MS = 10 * 60 * 1000;
+const QR_SESSION_TTL_MS = 120 * 1000;
 const TOKEN_CLEANUP_INTERVAL_MS = 10 * 60 * 1000;
 const TOKEN_DELETE_AFTER_EXPIRED_MS = 24 * 60 * 60 * 1000;
 
@@ -62,7 +64,47 @@ export class TokenService {
     private readonly prisma: PrismaService,
     private readonly riskControlService: RiskControlService,
     private readonly externalIntegrationService: ExternalIntegrationService,
+    private readonly captchaOcrService: CaptchaOcrService,
   ) {}
+
+  private buildPseudoPhone(seed: string) {
+    const hash = hashPlainText(seed || 'qr-login-seed');
+    let digits = '';
+    for (const ch of hash) {
+      digits += String(parseInt(ch, 16) % 10);
+      if (digits.length >= 8) {
+        break;
+      }
+    }
+    return `199${digits.padEnd(8, '0')}`;
+  }
+
+  private isRetryableCaptchaError(message: string) {
+    if (!message) {
+      return false;
+    }
+    const lower = message.toLowerCase();
+    return (
+      lower.includes('captcha') ||
+      message.includes('验证码') ||
+      lower.includes('verify') ||
+      lower.includes('img')
+    );
+  }
+
+  private isQrExpiredError(message: string) {
+    if (!message) {
+      return false;
+    }
+    const lower = message.toLowerCase();
+    return (
+      lower.includes('expired') ||
+      lower.includes('timeout') ||
+      lower.includes('invalid') ||
+      message.includes('过期') ||
+      message.includes('失效')
+    );
+  }
 
   private registerTokenSubmitFailure(ip?: string) {
     const state = this.riskControlService.registerFailure('token_submit', ip);
@@ -174,6 +216,44 @@ export class TokenService {
     return session;
   }
 
+  private ensureSmsSessionPhone(session: SmsSession, phone: string) {
+    if (session.phone !== phone) {
+      throw new BadRequestException('SMS_SESSION_PHONE_MISMATCH');
+    }
+  }
+
+  private extractQrSignals(raw: unknown) {
+    const serialized = JSON.stringify(raw ?? {}).toLowerCase();
+    const expiredByText =
+      serialized.includes('expired') ||
+      serialized.includes('timeout') ||
+      serialized.includes('invalid');
+    const scannedByText =
+      serialized.includes('scanned') ||
+      serialized.includes('confirm') ||
+      serialized.includes('authorized') ||
+      serialized.includes('allow');
+
+    const response =
+      raw && typeof raw === 'object'
+        ? ((raw as Record<string, unknown>).response as Record<string, unknown>)
+        : undefined;
+    const statusValue =
+      response && typeof response === 'object' ? response.status : undefined;
+    const statusCode = Number(statusValue);
+    const expiredByCode =
+      Number.isFinite(statusCode) && [4, 410, 408].includes(statusCode);
+    const scannedByCode =
+      Number.isFinite(statusCode) && [2, 3, 200, 201].includes(statusCode);
+
+    const expired = expiredByText || expiredByCode;
+    const scanned = !expired && (scannedByText || scannedByCode);
+    return {
+      scanned,
+      expired,
+    };
+  }
+
   private getQrSessionOrThrow(sessionId: string, token: string) {
     const normalizedId = String(sessionId ?? '').trim();
     const session = this.qrSessionMap.get(normalizedId);
@@ -192,14 +272,6 @@ export class TokenService {
     const issueToken = await this.getActiveTokenOrThrow(normalizedToken, submitIp);
 
     const bootstrap = await this.externalIntegrationService.smsBootstrap({});
-    const smsSessionId = createRandomToken('sms_');
-    this.smsSessionMap.set(smsSessionId, {
-      token: normalizedToken,
-      unloginToken: bootstrap.unloginToken,
-      phoneCc: String(bootstrap.phoneCc ?? 86),
-      deviceId: bootstrap.deviceId,
-      expiresAt: Date.now() + SMS_SESSION_TTL_MS,
-    });
 
     await this.prisma.auditLog.create({
       data: {
@@ -211,20 +283,13 @@ export class TokenService {
     });
 
     return {
-      smsSessionId,
       phoneCc: String(bootstrap.phoneCc ?? 86),
       captchaImageDataUrl: `data:${bootstrap.captchaMimeType};base64,${bootstrap.captchaBase64}`,
       expiresInSec: Math.floor(SMS_SESSION_TTL_MS / 1000),
     };
   }
 
-  async sendSmsCode(
-    token: string,
-    phone: string,
-    captcha: string,
-    smsSessionId: string,
-    submitIp?: string,
-  ) {
+  async sendSmsCode(token: string, phone: string, submitIp?: string) {
     this.ensureTokenSubmitAllowed(submitIp);
     this.cleanupAuthCache();
     await this.syncAndCleanupTokens();
@@ -234,14 +299,7 @@ export class TokenService {
     if (!/^1\d{10}$/.test(normalizedPhone)) {
       throw new BadRequestException('PHONE_INVALID');
     }
-    const captchaCode = String(captcha ?? '').trim();
-    if (!captchaCode) {
-      throw new BadRequestException('CAPTCHA_REQUIRED');
-    }
-
     const issueToken = await this.getActiveTokenOrThrow(normalizedToken, submitIp);
-    const session = this.getSmsSessionOrThrow(smsSessionId, normalizedToken);
-
     const cooldownKey = this.getSmsCooldownKey(
       normalizedToken,
       normalizedPhone,
@@ -254,22 +312,57 @@ export class TokenService {
       return { success: false, retryAfterSec: remainSec, message: 'SMS_WAIT' };
     }
 
-    try {
-      await this.externalIntegrationService.smsSendCode({
-        unloginToken: session.unloginToken,
-        phone: normalizedPhone,
-        phoneCc: session.phoneCc,
-        captcha: captchaCode,
-        deviceId: session.deviceId,
-      });
-    } catch (error) {
-      const raw = error instanceof Error ? error.message : '';
-      if (raw !== 'EXTERNAL_NETWORK_ERROR' && !raw.startsWith('EXTERNAL_HTTP_5')) {
-        this.registerTokenSubmitFailure(submitIp);
+    let sessionToSave: SmsSession | null = null;
+    let solvedCaptcha = '';
+    let lastError: unknown = null;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        const bootstrap = await this.externalIntegrationService.smsBootstrap({});
+        solvedCaptcha = await this.captchaOcrService.recognizeCaptcha(
+          bootstrap.captchaBase64,
+        );
+
+        await this.externalIntegrationService.smsSendCode({
+          unloginToken: bootstrap.unloginToken,
+          phone: normalizedPhone,
+          phoneCc: String(bootstrap.phoneCc ?? 86),
+          captcha: solvedCaptcha,
+          deviceId: bootstrap.deviceId,
+        });
+
+        sessionToSave = {
+          token: normalizedToken,
+          phone: normalizedPhone,
+          unloginToken: bootstrap.unloginToken,
+          phoneCc: String(bootstrap.phoneCc ?? 86),
+          deviceId: bootstrap.deviceId,
+          expiresAt: Date.now() + SMS_SESSION_TTL_MS,
+        };
+        break;
+      } catch (error) {
+        lastError = error;
+        const raw = error instanceof Error ? error.message : '';
+        if (!this.isRetryableCaptchaError(raw)) {
+          if (
+            raw !== 'EXTERNAL_NETWORK_ERROR' &&
+            !raw.startsWith('EXTERNAL_HTTP_5')
+          ) {
+            this.registerTokenSubmitFailure(submitIp);
+          }
+          throw error;
+        }
       }
-      throw error;
     }
 
+    if (!sessionToSave) {
+      if (lastError instanceof Error) {
+        throw lastError;
+      }
+      throw new BadRequestException('CAPTCHA_AUTO_RECOGNIZE_FAILED');
+    }
+
+    const smsSessionId = createRandomToken('sms_');
+    this.smsSessionMap.set(smsSessionId, sessionToSave);
     this.smsCooldownMap.set(cooldownKey, now + 60 * 1000);
     await this.prisma.auditLog.create({
       data: {
@@ -287,6 +380,7 @@ export class TokenService {
     return {
       success: true,
       retryAfterSec: 60,
+      smsSessionId,
       message: 'SMS_SENT',
     };
   }
@@ -329,15 +423,37 @@ export class TokenService {
       throw new BadRequestException('QR_SESSION_INVALID');
     }
 
-    const raw = await this.externalIntegrationService.qrStatus({
-      qrCode: session.qrCode,
-      unloginToken: session.unloginToken,
-      deviceId: session.deviceId,
-    });
+    let raw: unknown;
+    try {
+      raw = await this.externalIntegrationService.qrStatus({
+        qrCode: session.qrCode,
+        unloginToken: session.unloginToken,
+        deviceId: session.deviceId,
+      });
+    } catch (error) {
+      const text = error instanceof Error ? error.message : '';
+      if (this.isQrExpiredError(text)) {
+        this.qrSessionMap.delete(normalizedId);
+        return {
+          qrSessionId: normalizedId,
+          verified: false,
+          scanned: false,
+          expired: true,
+          raw: { error: text || 'QR_EXPIRED' },
+        };
+      }
+      throw error;
+    }
+    const signal = this.extractQrSignals(raw);
+    if (signal.expired) {
+      this.qrSessionMap.delete(normalizedId);
+    }
 
     return {
       qrSessionId: normalizedId,
       verified: session.verified,
+      scanned: signal.scanned,
+      expired: signal.expired,
       raw,
     };
   }
@@ -539,13 +655,18 @@ export class TokenService {
     if (!smsCode) {
       throw new BadRequestException('SMSCODE_INVALID');
     }
+    const normalizedPhone = normalizePhone(String(dto.phone ?? ''));
+    if (!/^1\d{10}$/.test(normalizedPhone)) {
+      throw new BadRequestException('PHONE_INVALID');
+    }
     if (!dto.smsSessionId) {
       throw new BadRequestException('SMS_SESSION_REQUIRED');
     }
     const smsSession = this.getSmsSessionOrThrow(dto.smsSessionId, normalizedToken);
+    this.ensureSmsSessionPhone(smsSession, normalizedPhone);
     const loginResult = await this.externalIntegrationService.smsLogin({
       unloginToken: smsSession.unloginToken,
-      phone: dto.phone,
+      phone: normalizedPhone,
       phoneCc: smsSession.phoneCc,
       verifyCode: smsCode,
       deviceId: smsSession.deviceId,
@@ -573,10 +694,7 @@ export class TokenService {
     await this.syncAndCleanupTokens();
 
     const normalizedToken = this.normalizeTokenOrThrow(token, submitIp);
-    const normalizedPhone = normalizePhone(dto.phone);
-    if (!/^1\d{10}$/.test(normalizedPhone)) {
-      throw new BadRequestException('PHONE_INVALID');
-    }
+    const loginMode = dto.loginMode === 'qr' ? 'qr' : 'sms';
 
     const issueToken = await this.getActiveTokenOrThrow(normalizedToken, submitIp);
     let login: LoginResolveResult;
@@ -589,6 +707,15 @@ export class TokenService {
       }
       throw error;
     }
+    const normalizedPhone =
+      loginMode === 'sms'
+        ? normalizePhone(String(dto.phone ?? ''))
+        : this.buildPseudoPhone(login.uid ?? normalizedToken);
+    if (loginMode === 'sms' && !/^1\d{10}$/.test(normalizedPhone)) {
+      throw new BadRequestException('PHONE_INVALID');
+    }
+    const phoneMaskedForStore =
+      loginMode === 'sms' ? maskPhone(normalizedPhone) : '-';
 
     let result: { submissionId: string };
     try {
@@ -621,7 +748,7 @@ export class TokenService {
             targetType: 'issue_token',
             targetId: issueToken.id,
             metadataJson: {
-              phoneMasked: maskPhone(normalizedPhone),
+              phoneMasked: phoneMaskedForStore,
               loginMode: login.mode,
               uid: login.uid ?? null,
               hasAccessToken: Boolean(login.accessToken),
@@ -651,7 +778,7 @@ export class TokenService {
     return {
       success: true,
       token: normalizedToken,
-      phoneMasked: maskPhone(normalizedPhone),
+      phoneMasked: phoneMaskedForStore,
       status: TokenStatus.consumed,
       loginMode: login.mode,
       submissionId: result.submissionId,

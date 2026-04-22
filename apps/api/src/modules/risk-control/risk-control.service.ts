@@ -79,6 +79,16 @@ export class RiskControlService {
     map.set(this.normalizeIp(ip), { failedCount: 0 });
   }
 
+  banIp(scope: RiskScope, ip: string, durationMinutes = 60) {
+    const map = this.getMap(scope);
+    const normalizedIp = this.normalizeIp(ip);
+    const durationMs = Math.max(1, durationMinutes) * 60 * 1000;
+    map.set(normalizedIp, {
+      failedCount: FAILURE_LIMIT,
+      bannedUntil: Date.now() + durationMs,
+    });
+  }
+
   listActiveBans(scope?: RiskScope): BanRecord[] {
     const scopes: RiskScope[] = scope ? [scope] : ['query', 'token_submit'];
     const now = Date.now();

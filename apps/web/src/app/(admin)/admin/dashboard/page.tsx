@@ -41,6 +41,7 @@ export default function DashboardPage() {
       ]
     : [];
   const chartMax = Math.max(1, ...chartRows.map((item) => item.value));
+  const chartColors = ["#00754a", "#2b6cb0", "#c9771f", "#a03461"];
 
   return (
     <section className="grid gap-5">
@@ -70,23 +71,27 @@ export default function DashboardPage() {
       <article className="apple-panel p-5">
         <h2 className="h-display text-xl font-semibold">运行快照图</h2>
         <p className="mt-1 text-sm text-[var(--text-muted)]">
-          展示当前关键指标占比，便于手机端快速判断是否有堆积风险。
+          展示当前关键指标分布，便于快速识别积压风险。
         </p>
-        <div className="mt-4 grid gap-3">
-          {chartRows.map((item) => (
-            <div key={item.label} className="grid gap-1">
-              <div className="flex items-center justify-between text-sm">
-                <span className="text-[var(--text-muted)]">{item.label}</span>
-                <span className="font-semibold text-[var(--page-text)]">{item.value}</span>
+        <div className="mt-4 grid gap-4 md:grid-cols-4">
+          {chartRows.map((item, index) => {
+            const heightPercent = Math.max(12, Math.round((item.value / chartMax) * 100));
+            return (
+              <div key={item.label} className="rounded-[12px] border border-[var(--card-border)] bg-[var(--card-bg-soft)] p-3">
+                <div className="flex h-40 items-end justify-center rounded-[10px] bg-white p-2">
+                  <div
+                    className="w-14 rounded-t-[8px] transition-all"
+                    style={{
+                      height: `${heightPercent}%`,
+                      background: chartColors[index % chartColors.length],
+                    }}
+                  />
+                </div>
+                <p className="mt-3 text-center text-sm text-[var(--text-muted)]">{item.label}</p>
+                <p className="text-center text-xl font-semibold text-[var(--page-text)]">{item.value}</p>
               </div>
-              <div className="h-2 rounded-full bg-[var(--surface-quiet)]">
-                <div
-                  className="h-full rounded-full bg-[var(--brand-green-accent)] transition-all"
-                  style={{ width: `${Math.max(8, Math.round((item.value / chartMax) * 100))}%` }}
-                />
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </article>
 

@@ -61,16 +61,18 @@ body {
 }
 
 .btn-pill {
-  border: 1px solid var(--brand-green-accent);
+  border: 1px solid var(--card-border);
   border-radius: var(--radius-pill);
-  color: var(--brand-green-accent);
+  color: var(--page-text);
   padding: 8px 16px;
   background: #fff;
   transition: all 0.2s ease;
 }
 
 .btn-pill:hover {
-  background: color-mix(in srgb, var(--brand-green-accent) 10%, transparent);
+  border-color: color-mix(in srgb, var(--brand-green-accent) 35%, #d6dbde);
+  color: var(--brand-green-accent);
+  background: color-mix(in srgb, var(--brand-green-accent) 8%, #fff);
 }
 
 .btn-pill:active {
@@ -105,7 +107,7 @@ body {
   min-height: 100vh;
   display: grid;
   grid-template-columns: 260px 1fr;
-  background: linear-gradient(180deg, #f2f0eb 0%, #f8f7f5 35%, #ffffff 100%);
+  background: linear-gradient(180deg, #f2f0eb 0%, #f8f7f5 45%, #ffffff 100%);
 }
 
 .admin-sidebar {
@@ -134,8 +136,8 @@ body {
 
 .admin-nav-item.active {
   border-color: color-mix(in srgb, var(--brand-green-accent) 38%, #dfe7e4);
-  background: color-mix(in srgb, var(--brand-green-accent) 10%, #ffffff);
-  color: var(--brand-green-accent);
+  background: color-mix(in srgb, var(--brand-green-accent) 9%, #ffffff);
+  color: var(--page-text);
   font-weight: 600;
 }
 

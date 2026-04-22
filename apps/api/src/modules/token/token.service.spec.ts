@@ -21,7 +21,15 @@ describe('TokenService', () => {
       uid: 'mock_uid',
     })),
   } as any;
-  const service = new TokenService(prisma, riskControl, externalMock);
+  const captchaOcrMock = {
+    recognizeCaptcha: jest.fn(async () => 'ABCD'),
+  } as any;
+  const service = new TokenService(
+    prisma,
+    riskControl,
+    externalMock,
+    captchaOcrMock,
+  );
 
   beforeAll(async () => {
     await prisma.$connect();
@@ -42,6 +50,7 @@ describe('TokenService', () => {
     const smsSessionId = 'sms_test_session';
     (service as any).smsSessionMap.set(smsSessionId, {
       token,
+      phone: '13800138000',
       unloginToken: 'mock_unlogin',
       phoneCc: '86',
       deviceId: 'mock_device',

@@ -36,7 +36,6 @@ function initialCaseState(): CaseState {
 export default function ApiCenterPage() {
   const [token, setToken] = useState("tk_demo_token");
   const [phone, setPhone] = useState("13800138000");
-  const [smsCaptcha, setSmsCaptcha] = useState("");
   const [smsCode, setSmsCode] = useState("");
   const [smsSessionId, setSmsSessionId] = useState("");
   const [qrSessionId, setQrSessionId] = useState("");
@@ -81,14 +80,18 @@ export default function ApiCenterPage() {
         path: "/public/token/sms/bootstrap",
         run: async () => {
           const data = await apiRequest<{
-            smsSessionId: string;
-            captchaImageDataUrl: string;
+            captchaImageDataUrl?: string;
+            smsSessionId?: string;
           }>("/public/token/sms/bootstrap", {
             method: "POST",
             body: { token: token.trim() },
           });
-          setSmsSessionId(data.smsSessionId);
-          setSmsCaptchaImage(data.captchaImageDataUrl);
+          if (data.captchaImageDataUrl) {
+            setSmsCaptchaImage(data.captchaImageDataUrl);
+          }
+          if (data.smsSessionId) {
+            setSmsSessionId(data.smsSessionId);
+          }
           return data;
         },
       },
@@ -103,8 +106,6 @@ export default function ApiCenterPage() {
             body: {
               token: token.trim(),
               phone: phone.trim(),
-              captcha: smsCaptcha.trim(),
-              smsSessionId: smsSessionId.trim(),
             },
           }),
       },
@@ -175,7 +176,6 @@ export default function ApiCenterPage() {
             method: "POST",
             body: {
               token: token.trim(),
-              phone: phone.trim(),
               loginMode: "qr",
               qrSessionId: qrSessionId.trim(),
             },
@@ -224,7 +224,7 @@ export default function ApiCenterPage() {
           }),
       },
     ],
-    [phone, qrSessionId, queryCaptchaCode, queryCaptchaId, queryType, queryValue, smsCaptcha, smsCode, smsSessionId, token],
+    [phone, qrSessionId, queryCaptchaCode, queryCaptchaId, queryType, queryValue, smsCode, smsSessionId, token],
   );
 
   async function runCase(item: CaseItem) {
@@ -268,7 +268,6 @@ export default function ApiCenterPage() {
           <input className="field font-mono" value={token} onChange={(e) => setToken(e.target.value)} placeholder="CDK" />
           <input className="field" value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="手机号" />
           <input className="field" value={smsSessionId} onChange={(e) => setSmsSessionId(e.target.value)} placeholder="smsSessionId" />
-          <input className="field" value={smsCaptcha} onChange={(e) => setSmsCaptcha(e.target.value)} placeholder="短信图形验证码" />
           <input className="field" value={smsCode} onChange={(e) => setSmsCode(e.target.value)} placeholder="短信验证码" />
           <input className="field" value={qrSessionId} onChange={(e) => setQrSessionId(e.target.value)} placeholder="qrSessionId" />
           <select className="field" value={queryType} onChange={(e) => setQueryType(e.target.value as "token" | "phone")}>

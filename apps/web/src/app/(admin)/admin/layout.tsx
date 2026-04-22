@@ -38,7 +38,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     <div className="admin-shell">
       <aside className="admin-sidebar">
         <div>
-          <p className="text-xs uppercase tracking-[0.2em] text-[var(--text-subtle)]">Operation Console</p>
+          <p className="text-xs uppercase tracking-[0.2em] text-[var(--text-subtle)]">管理控制台</p>
           <h1 className="h-display mt-2 text-2xl font-semibold text-[var(--page-text)]">CDK 发卡后台</h1>
           <p className="mt-2 text-xs text-[var(--text-muted)]">统一处理账户、CDK、待办与风控。</p>
         </div>
@@ -64,7 +64,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
       <section className="admin-main">
         <header className="admin-topbar">
           <div>
-            <p className="text-xs uppercase tracking-[0.18em] text-[var(--text-subtle)]">Management</p>
+            <p className="text-xs uppercase tracking-[0.18em] text-[var(--text-subtle)]">后台管理</p>
             <span className="h-display text-xl font-semibold text-[var(--page-text)]">运营管理台</span>
           </div>
           <div className="flex flex-wrap items-center gap-3">

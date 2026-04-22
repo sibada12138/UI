@@ -25,6 +25,17 @@ type AdminUser = {
   createdAt: string;
 };
 
+function roleLabel(role: "admin" | "operator_admin") {
+  if (role === "admin") return "超级管理员";
+  return "运营管理员";
+}
+
+function adminStatusLabel(status: string) {
+  if (status === "active") return "启用";
+  if (status === "disabled") return "禁用";
+  return status;
+}
+
 function statusLabel(status: string) {
   if (status === "completed") return "已开";
   if (status === "pending") return "待处理";
@@ -133,7 +144,7 @@ export default function AccountsPage() {
       <article className="apple-panel p-6">
         <h2 className="h-display text-2xl font-semibold">管理员账户</h2>
         <p className="mt-1 text-sm text-[var(--text-muted)]">
-          只有 `admin` 可创建管理员；`operator_admin` 无创建权限。
+          只有超级管理员可创建管理员；运营管理员无创建权限。
         </p>
 
         <form className="mt-4 grid gap-3 md:grid-cols-4" onSubmit={onCreateAdmin}>
@@ -155,8 +166,8 @@ export default function AccountsPage() {
             value={role}
             onChange={(e) => setRole(e.target.value as "admin" | "operator_admin")}
           >
-            <option value="operator_admin">operator_admin</option>
-            <option value="admin">admin</option>
+            <option value="operator_admin">运营管理员</option>
+            <option value="admin">超级管理员</option>
           </select>
           <button className="btn-primary" type="submit">
             新增管理员
@@ -177,8 +188,8 @@ export default function AccountsPage() {
               {admins.map((item) => (
                 <tr key={item.id}>
                   <td>{item.username}</td>
-                  <td>{item.role}</td>
-                  <td>{item.status}</td>
+                  <td>{roleLabel(item.role)}</td>
+                  <td>{adminStatusLabel(item.status)}</td>
                   <td>{new Date(item.createdAt).toLocaleString()}</td>
                 </tr>
               ))}

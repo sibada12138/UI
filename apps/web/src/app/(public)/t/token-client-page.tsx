@@ -1,13 +1,14 @@
 "use client";
 /* eslint-disable react-hooks/set-state-in-effect */
 
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
 import { apiRequest } from "@/lib/api";
 import { toErrorMessage } from "@/lib/error-message";
 import { pushToast } from "@/lib/toast";
 
 type CdkStatusResponse = {
+  token: string;
   status: string;
   expiresAt: string;
   consumedAt?: string | null;
@@ -26,11 +27,10 @@ type QueryResponse = {
   updatedAt: string | null;
 };
 
-type SmsBootstrapResponse = {
-  smsSessionId: string;
-  phoneCc: string;
-  captchaImageDataUrl: string;
-  expiresInSec: number;
+type SendSmsResponse = {
+  success: boolean;
+  retryAfterSec?: number;
+  smsSessionId?: string;
 };
 
 type QrCreateResponse = {
@@ -41,13 +41,18 @@ type QrCreateResponse = {
 };
 
 type QrStatusResponse = {
+  qrSessionId: string;
   verified: boolean;
+  scanned: boolean;
+  expired: boolean;
   raw: unknown;
 };
 
 type Props = {
   initialToken?: string;
 };
+
+const QR_POLL_INTERVAL_MS = 2000;
 
 function isCdkValid(value: string) {
   return /^tk_[a-zA-Z0-9_-]{8,}$/.test(value.trim());
@@ -71,6 +76,11 @@ function rechargeStatusLabel(status?: string) {
   return status || "-";
 }
 
+function formatDate(value?: string | null) {
+  if (!value) return "-";
+  return new Date(value).toLocaleString();
+}
+
 export default function TokenClientPage({ initialToken = "" }: Props) {
   const [loginMode, setLoginMode] = useState<"sms" | "qr">("sms");
   const [cdk, setCdk] = useState(initialToken);
@@ -78,20 +88,19 @@ export default function TokenClientPage({ initialToken = "" }: Props) {
   const [smsCode, setSmsCode] = useState("");
   const [message, setMessage] = useState("");
   const [status, setStatus] = useState<CdkStatusResponse | null>(null);
+  const [submitLoading, setSubmitLoading] = useState(false);
 
   const [smsSessionId, setSmsSessionId] = useState("");
-  const [smsCaptchaImage, setSmsCaptchaImage] = useState("");
-  const [smsCaptchaCode, setSmsCaptchaCode] = useState("");
   const [smsLoading, setSmsLoading] = useState(false);
   const [smsCountdown, setSmsCountdown] = useState(0);
 
   const [qrSessionId, setQrSessionId] = useState("");
   const [qrImageData, setQrImageData] = useState("");
-  const [qrVerified, setQrVerified] = useState(false);
   const [qrLoading, setQrLoading] = useState(false);
-  const [qrStatusText, setQrStatusText] = useState("未开始");
-
-  const [submitLoading, setSubmitLoading] = useState(false);
+  const [qrStatusText, setQrStatusText] = useState("请切换到扫码登录后自动加载二维码。");
+  const [qrVerified, setQrVerified] = useState(false);
+  const [qrExpired, setQrExpired] = useState(false);
+  const [qrDeadlineAt, setQrDeadlineAt] = useState<number | null>(null);
 
   const [queryVisible, setQueryVisible] = useState(false);
   const [queryType, setQueryType] = useState<"token" | "phone">("token");
@@ -103,17 +112,26 @@ export default function TokenClientPage({ initialToken = "" }: Props) {
   const [queryLoading, setQueryLoading] = useState(false);
   const [queryMessage, setQueryMessage] = useState("");
 
-  const cdkValid = useMemo(() => isCdkValid(cdk), [cdk]);
+  const qrPollingBusyRef = useRef(false);
+  const qrConfirmBusyRef = useRef(false);
+  const qrLastConfirmAtRef = useRef(0);
 
+  const cdkValid = useMemo(() => isCdkValid(cdk), [cdk]);
   const currentStep = useMemo(() => {
-    if (loginMode === "qr" && qrVerified) {
-      return 2;
+    if (!cdkValid) return 1;
+    if (loginMode === "sms") {
+      return smsCode.trim() && smsSessionId ? 3 : 2;
     }
-    if (loginMode === "sms" && smsCode.trim()) {
-      return 2;
+    return qrVerified ? 3 : 2;
+  }, [cdkValid, loginMode, qrVerified, smsCode, smsSessionId]);
+
+  const submitDisabled = useMemo(() => {
+    if (!cdkValid || submitLoading) return true;
+    if (loginMode === "sms") {
+      return !/^1\d{10}$/.test(phone.trim()) || !smsCode.trim() || !smsSessionId;
     }
-    return 1;
-  }, [loginMode, qrVerified, smsCode]);
+    return !qrSessionId || !qrVerified;
+  }, [cdkValid, loginMode, phone, qrSessionId, qrVerified, smsCode, smsSessionId, submitLoading]);
 
   async function loadCdkStatus(nextValue: string) {
     const value = nextValue.trim();
@@ -121,6 +139,7 @@ export default function TokenClientPage({ initialToken = "" }: Props) {
       setStatus(null);
       return;
     }
+
     try {
       const data = await apiRequest<CdkStatusResponse>(
         `/public/token/${encodeURIComponent(value)}/status`,
@@ -142,168 +161,97 @@ export default function TokenClientPage({ initialToken = "" }: Props) {
       setQueryCaptchaId(data.captchaId);
       setQueryCaptchaSvg(data.captchaSvg);
     } catch (error) {
-      setQueryMessage(toErrorMessage(error, "验证码加载失败"));
-    }
-  }
-
-  useEffect(() => {
-    void loadQueryCaptcha();
-  }, []);
-
-  useEffect(() => {
-    if (initialToken) {
-      setCdk(initialToken);
-      setQueryValue(initialToken);
-      void loadCdkStatus(initialToken);
-    }
-  }, [initialToken]);
-
-  useEffect(() => {
-    if (smsCountdown <= 0) {
-      return;
-    }
-    const timer = window.setInterval(() => {
-      setSmsCountdown((prev) => (prev > 0 ? prev - 1 : 0));
-    }, 1000);
-    return () => window.clearInterval(timer);
-  }, [smsCountdown]);
-
-  async function refreshSmsCaptcha() {
-    if (!cdkValid) {
-      setMessage("请先输入有效 CDK。");
-      return;
-    }
-    setMessage("");
-    setSmsLoading(true);
-    try {
-      const data = await apiRequest<SmsBootstrapResponse>("/public/token/sms/bootstrap", {
-        method: "POST",
-        body: { token: cdk.trim() },
-      });
-      setSmsSessionId(data.smsSessionId);
-      setSmsCaptchaImage(data.captchaImageDataUrl);
-      setSmsCaptchaCode("");
-      pushToast({ type: "success", message: "图形验证码已刷新。" });
-    } catch (error) {
-      const text = toErrorMessage(error, "图形验证码加载失败");
-      setMessage(text);
-      pushToast({ type: "error", message: text });
-    } finally {
-      setSmsLoading(false);
+      setQueryMessage(toErrorMessage(error, "查询验证码加载失败"));
     }
   }
 
   async function sendSmsCode() {
-    const phoneValue = phone.trim();
+    const normalizedPhone = phone.trim();
     if (!cdkValid) {
       setMessage("请先输入有效 CDK。");
       return;
     }
-    if (!/^1\d{10}$/.test(phoneValue)) {
-      setMessage("请输入正确手机号。");
+    if (!/^1\d{10}$/.test(normalizedPhone)) {
+      setMessage("请输入正确的手机号。");
       return;
     }
-    if (!smsSessionId || !smsCaptchaImage) {
-      setMessage("请先获取图形验证码。");
-      return;
-    }
-    if (!smsCaptchaCode.trim()) {
-      setMessage("请输入图形验证码。");
+    if (smsCountdown > 0) {
       return;
     }
 
     setMessage("");
     setSmsLoading(true);
     try {
-      const data = await apiRequest<{ success: boolean; retryAfterSec?: number }>(
-        "/public/token/send-sms",
-        {
-          method: "POST",
-          body: {
-            token: cdk.trim(),
-            phone: phoneValue,
-            captcha: smsCaptchaCode.trim(),
-            smsSessionId,
-          },
+      const data = await apiRequest<SendSmsResponse>("/public/token/send-sms", {
+        method: "POST",
+        body: {
+          token: cdk.trim(),
+          phone: normalizedPhone,
         },
-      );
+      });
+      setSmsCountdown(Math.max(1, Number(data.retryAfterSec ?? 60)));
       if (data.success) {
-        setSmsCountdown(Math.max(1, Number(data.retryAfterSec ?? 60)));
-        pushToast({ type: "success", message: "短信已发送，请注意查收。" });
+        setSmsSessionId(String(data.smsSessionId ?? ""));
+        pushToast({ type: "success", message: "短信已发送，请输入验证码后提交。" });
       } else {
-        setSmsCountdown(Math.max(1, Number(data.retryAfterSec ?? 60)));
-        pushToast({ type: "info", message: "发送过于频繁，请稍后再试。" });
+        pushToast({ type: "info", message: "短信发送过于频繁，请稍后重试。" });
       }
     } catch (error) {
       const text = toErrorMessage(error, "短信发送失败");
       setMessage(text);
       pushToast({ type: "error", message: text });
-      await refreshSmsCaptcha();
     } finally {
       setSmsLoading(false);
     }
   }
 
-  async function createQr() {
+  async function createQrSession() {
     if (!cdkValid) {
-      setMessage("请先输入有效 CDK。");
+      setQrSessionId("");
+      setQrImageData("");
+      setQrVerified(false);
+      setQrExpired(false);
+      setQrDeadlineAt(null);
+      setQrStatusText("请输入有效 CDK 后自动加载二维码。");
       return;
     }
-    setMessage("");
+
     setQrLoading(true);
     try {
       const data = await apiRequest<QrCreateResponse>("/public/token/qr/create", {
         method: "POST",
         body: { token: cdk.trim() },
       });
+      const deadline = Date.now() + Math.min(120, Number(data.expiresInSec || 120)) * 1000;
       setQrSessionId(data.qrSessionId);
       setQrImageData(data.qrImageDataUrl);
       setQrVerified(false);
-      setQrStatusText("二维码已生成，请使用客户端扫码。");
-      pushToast({ type: "success", message: "二维码已生成。" });
+      setQrExpired(false);
+      setQrDeadlineAt(deadline);
+      setQrStatusText("二维码已加载，系统每 2 秒自动检查扫码状态。");
+      pushToast({ type: "success", message: "扫码二维码已加载。" });
     } catch (error) {
-      const text = toErrorMessage(error, "二维码生成失败");
+      const text = toErrorMessage(error, "二维码加载失败");
       setMessage(text);
+      setQrStatusText(text);
       pushToast({ type: "error", message: text });
     } finally {
       setQrLoading(false);
     }
   }
 
-  async function refreshQrStatus() {
-    if (!qrSessionId) {
-      setMessage("请先生成二维码。");
+  async function tryConfirmQrLogin(silent = true) {
+    if (!cdkValid || !qrSessionId || qrVerified || qrExpired) {
       return;
     }
-    setQrLoading(true);
+    const now = Date.now();
+    if (qrConfirmBusyRef.current || now - qrLastConfirmAtRef.current < 3500) {
+      return;
+    }
+    qrLastConfirmAtRef.current = now;
+    qrConfirmBusyRef.current = true;
     try {
-      const data = await apiRequest<QrStatusResponse>(
-        `/public/token/qr/${encodeURIComponent(qrSessionId)}/status`,
-      );
-      setQrVerified(Boolean(data.verified));
-      setQrStatusText(data.verified ? "已完成扫码授权。" : "等待扫码确认中。");
-    } catch (error) {
-      const text = toErrorMessage(error, "扫码状态读取失败");
-      setMessage(text);
-      pushToast({ type: "error", message: text });
-    } finally {
-      setQrLoading(false);
-    }
-  }
-
-  async function confirmQrLogin() {
-    if (!cdkValid) {
-      setMessage("请先输入有效 CDK。");
-      return;
-    }
-    if (!qrSessionId) {
-      setMessage("请先生成二维码。");
-      return;
-    }
-
-    setQrLoading(true);
-    try {
-      await apiRequest<{ success: boolean }>("/public/token/qr/login", {
+      await apiRequest("/public/token/qr/login", {
         method: "POST",
         body: {
           token: cdk.trim(),
@@ -311,14 +259,70 @@ export default function TokenClientPage({ initialToken = "" }: Props) {
         },
       });
       setQrVerified(true);
-      setQrStatusText("扫码登录校验通过。");
-      pushToast({ type: "success", message: "扫码登录成功，可提交。 " });
+      setQrStatusText("扫码确认成功，可以提交登录信息。");
+      pushToast({ type: "success", message: "扫码确认成功，可以提交。" });
     } catch (error) {
-      const text = toErrorMessage(error, "扫码登录失败");
-      setMessage(text);
-      pushToast({ type: "error", message: text });
+      const text = toErrorMessage(error, "扫码确认失败");
+      if (!silent) {
+        setMessage(text);
+        pushToast({ type: "error", message: text });
+      } else {
+        setQrStatusText("已检测到扫码，等待客户端确认授权。");
+      }
     } finally {
-      setQrLoading(false);
+      qrConfirmBusyRef.current = false;
+    }
+  }
+
+  async function pollQrStatus() {
+    if (!qrSessionId || !qrDeadlineAt || qrVerified || qrExpired) {
+      return;
+    }
+    if (qrPollingBusyRef.current) {
+      return;
+    }
+
+    const remainMs = qrDeadlineAt - Date.now();
+    if (remainMs <= 0) {
+      setQrExpired(true);
+      setQrStatusText("二维码已超时，请点击重新加载。");
+      return;
+    }
+
+    qrPollingBusyRef.current = true;
+    try {
+      const data = await apiRequest<QrStatusResponse>(
+        `/public/token/qr/${encodeURIComponent(qrSessionId)}/status`,
+      );
+
+      if (data.expired) {
+        setQrExpired(true);
+        setQrStatusText("二维码已过期，请点击重新加载。");
+        return;
+      }
+      if (data.verified) {
+        setQrVerified(true);
+        setQrStatusText("扫码确认成功，可以提交登录信息。");
+        return;
+      }
+
+      const remainSec = Math.max(1, Math.ceil((qrDeadlineAt - Date.now()) / 1000));
+      if (data.scanned) {
+        setQrStatusText(`检测到已扫码，正在确认授权（剩余 ${remainSec}s）...`);
+        await tryConfirmQrLogin(true);
+      } else {
+        setQrStatusText(`等待扫码中（剩余 ${remainSec}s）...`);
+      }
+    } catch (error) {
+      const raw = error instanceof Error ? error.message : "";
+      if (raw === "QR_SESSION_INVALID") {
+        setQrExpired(true);
+        setQrStatusText("二维码已失效，请点击重新加载。");
+        return;
+      }
+      setQrStatusText(toErrorMessage(error, "扫码状态检查失败"));
+    } finally {
+      qrPollingBusyRef.current = false;
     }
   }
 
@@ -326,43 +330,57 @@ export default function TokenClientPage({ initialToken = "" }: Props) {
     event.preventDefault();
     setMessage("");
 
-    if (!cdk.trim()) {
-      setMessage("请先填写 CDK。");
-      return;
-    }
     if (!cdkValid) {
-      setMessage("CDK 格式不正确。");
+      setMessage("请先填写正确的 CDK。");
       return;
     }
 
+    if (loginMode === "sms") {
+      if (!/^1\d{10}$/.test(phone.trim())) {
+        setMessage("请输入正确的手机号。");
+        return;
+      }
+      if (!smsSessionId) {
+        setMessage("请先发送短信验证码。");
+        return;
+      }
+      if (!smsCode.trim()) {
+        setMessage("请输入短信验证码。");
+        return;
+      }
+    } else {
+      if (!qrSessionId) {
+        setMessage("请先加载扫码二维码。");
+        return;
+      }
+      if (!qrVerified) {
+        setMessage("请先完成扫码确认。");
+        return;
+      }
+    }
+
     const body =
-      loginMode === "qr"
+      loginMode === "sms"
         ? {
             token: cdk.trim(),
-            phone,
-            loginMode: "qr",
-            qrSessionId,
+            loginMode: "sms",
+            phone: phone.trim(),
+            smsCode: smsCode.trim(),
+            smsSessionId,
           }
         : {
             token: cdk.trim(),
-            phone,
-            smsCode,
-            loginMode: "sms",
-            smsSessionId,
+            loginMode: "qr",
+            qrSessionId,
           };
 
     setSubmitLoading(true);
     try {
-      const result = await apiRequest<{
-        success: boolean;
-        phoneMasked: string;
-        status: string;
-      }>("/public/token/submit", {
+      await apiRequest("/public/token/submit", {
         method: "POST",
         body,
       });
-      const successText = `提交成功：${result.phoneMasked}，状态：${statusLabel(result.status)}`;
-      setMessage(successText);
+      setMessage("提交成功，客服正在处理开卡。");
       pushToast({ type: "success", message: "登录信息提交成功。" });
       await loadCdkStatus(cdk.trim());
     } catch (error) {
@@ -386,7 +404,7 @@ export default function TokenClientPage({ initialToken = "" }: Props) {
           queryType,
           queryValue: queryValue.trim(),
           captchaId: queryCaptchaId,
-          captchaCode: queryCaptchaCode,
+          captchaCode: queryCaptchaCode.trim(),
         },
       });
       setQueryResult(data);
@@ -400,28 +418,71 @@ export default function TokenClientPage({ initialToken = "" }: Props) {
     }
   }
 
+  useEffect(() => {
+    void loadQueryCaptcha();
+  }, []);
+
+  useEffect(() => {
+    if (!initialToken) {
+      return;
+    }
+    setCdk(initialToken);
+    setQueryValue(initialToken);
+    void loadCdkStatus(initialToken);
+  }, [initialToken]);
+
+  useEffect(() => {
+    if (smsCountdown <= 0) {
+      return;
+    }
+    const timer = window.setInterval(() => {
+      setSmsCountdown((prev) => (prev <= 1 ? 0 : prev - 1));
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [smsCountdown]);
+
+  useEffect(() => {
+    if (loginMode !== "qr") {
+      return;
+    }
+    void createQrSession();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loginMode, cdk]);
+
+  useEffect(() => {
+    if (loginMode !== "qr" || !qrSessionId || !qrDeadlineAt || qrVerified || qrExpired) {
+      return;
+    }
+    void pollQrStatus();
+    const timer = window.setInterval(() => {
+      void pollQrStatus();
+    }, QR_POLL_INTERVAL_MS);
+    return () => window.clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loginMode, qrSessionId, qrDeadlineAt, qrVerified, qrExpired]);
+
   return (
-    <main className="min-h-screen bg-[linear-gradient(160deg,#f7f8fb_0%,#f1f3f8_30%,#eef2f6_70%,#ffffff_100%)] px-4 py-8 text-[var(--page-text)] md:px-8 md:py-10">
+    <main className="min-h-screen bg-[linear-gradient(180deg,#f2f0eb_0%,#f6f5f2_45%,#ffffff_100%)] px-4 py-6 text-[var(--page-text)] md:px-8 md:py-10">
       <div className="mx-auto max-w-5xl">
-        <div className="overflow-hidden rounded-[18px] border border-[var(--card-border)] bg-white shadow-[0_20px_55px_rgba(10,24,40,0.08)]">
-          <div className="bg-[linear-gradient(120deg,#1e2c3a_0%,#2f4f68_45%,#4a6f8e_100%)] p-6 text-white md:p-8">
-            <p className="inline-flex rounded-full border border-white/30 bg-white/10 px-3 py-1 text-xs tracking-[0.08em] text-white/90">
-              CDK 用户中心
+        <div className="overflow-hidden rounded-[16px] border border-[var(--card-border)] bg-white shadow-[0_0_0.5px_rgba(0,0,0,0.14),0_1px_1px_rgba(0,0,0,0.24)]">
+          <div className="bg-[var(--brand-green-dark)] px-6 py-7 text-white md:px-8 md:py-9">
+            <p className="inline-flex rounded-full border border-white/35 px-3 py-1 text-xs tracking-[0.08em] text-white/90">
+              Recharge Card System
             </p>
             <h1 className="h-display mt-4 text-3xl font-semibold leading-[1.15] md:text-5xl">
-              登录提交与开卡查询
+              登录提交与进度查询
             </h1>
-            <p className="mt-3 max-w-2xl text-sm text-white/85 md:text-base">
-              通过 CDK 完成登录信息提交，客服处理后可在下方查询最新进度。
+            <p className="mt-3 max-w-3xl text-sm text-white/80 md:text-base">
+              通过 CDK 完成短信登录或扫码登录，提交后由客服进行后续充值处理。
             </p>
           </div>
 
-          <div className="bg-white p-6 md:p-8">
+          <div className="bg-white px-6 py-5 md:px-8">
             <div className="grid grid-cols-3 gap-3 text-center">
               {[
                 { step: 1, label: "验证 CDK" },
-                { step: 2, label: "登录校验" },
-                { step: 3, label: "完成提交" },
+                { step: 2, label: "登录验证" },
+                { step: 3, label: "提交完成" },
               ].map((item) => (
                 <div key={item.step} className="grid justify-items-center gap-2">
                   <div
@@ -469,28 +530,18 @@ export default function TokenClientPage({ initialToken = "" }: Props) {
             {status ? (
               <div className="rounded-[10px] border border-[var(--card-border)] bg-[var(--card-bg-soft)] px-4 py-3 text-sm text-[var(--text-muted)]">
                 <p>CDK 状态：{statusLabel(status.status)}</p>
-                <p>过期时间：{new Date(status.expiresAt).toLocaleString()}</p>
-                {status.consumedAt ? <p>提交时间：{new Date(status.consumedAt).toLocaleString()}</p> : null}
+                <p>过期时间：{formatDate(status.expiresAt)}</p>
+                {status.consumedAt ? <p>提交时间：{formatDate(status.consumedAt)}</p> : null}
               </div>
             ) : null}
 
-            <label className="text-sm text-[var(--text-muted)]" htmlFor="phone">
-              手机号
-            </label>
-            <input
-              id="phone"
-              className="field"
-              placeholder="请输入手机号"
-              type="tel"
-              value={phone}
-              onChange={(e) => setPhone(e.target.value)}
-            />
-
-            <div className="mt-1 flex rounded-full border border-[var(--card-border)] bg-[var(--card-bg-soft)] p-1">
+            <div className="mt-1 flex rounded-full border border-[var(--card-border)] bg-[var(--surface-quiet)] p-1">
               <button
                 type="button"
-                className={`flex-1 rounded-full px-4 py-2 text-sm font-medium ${
-                  loginMode === "sms" ? "bg-white text-[var(--page-text)] shadow-sm" : "text-[var(--text-muted)]"
+                className={`flex-1 rounded-full px-4 py-2 text-sm font-medium transition ${
+                  loginMode === "sms"
+                    ? "bg-white text-[var(--page-text)] shadow-sm"
+                    : "text-[var(--text-muted)]"
                 }`}
                 onClick={() => setLoginMode("sms")}
               >
@@ -498,8 +549,10 @@ export default function TokenClientPage({ initialToken = "" }: Props) {
               </button>
               <button
                 type="button"
-                className={`flex-1 rounded-full px-4 py-2 text-sm font-medium ${
-                  loginMode === "qr" ? "bg-white text-[var(--page-text)] shadow-sm" : "text-[var(--text-muted)]"
+                className={`flex-1 rounded-full px-4 py-2 text-sm font-medium transition ${
+                  loginMode === "qr"
+                    ? "bg-white text-[var(--page-text)] shadow-sm"
+                    : "text-[var(--text-muted)]"
                 }`}
                 onClick={() => setLoginMode("qr")}
               >
@@ -509,35 +562,17 @@ export default function TokenClientPage({ initialToken = "" }: Props) {
 
             {loginMode === "sms" ? (
               <div className="grid gap-3 rounded-[12px] border border-[var(--card-border)] bg-[var(--card-bg-soft)] p-4">
+                <label className="text-sm text-[var(--text-muted)]" htmlFor="phone">
+                  手机号
+                </label>
                 <div className="grid gap-3 md:grid-cols-[1fr_auto]">
                   <input
+                    id="phone"
                     className="field"
-                    placeholder="输入图形验证码"
-                    value={smsCaptchaCode}
-                    onChange={(e) => setSmsCaptchaCode(e.target.value)}
-                  />
-                  <button className="btn-pill" type="button" onClick={() => void refreshSmsCaptcha()} disabled={smsLoading}>
-                    {smsLoading ? "加载中..." : "获取图形验证码"}
-                  </button>
-                </div>
-                {smsCaptchaImage ? (
-                  <div className="rounded-[10px] border border-[var(--card-border)] bg-white p-2">
-                    <Image
-                      src={smsCaptchaImage}
-                      alt="图形验证码"
-                      width={320}
-                      height={64}
-                      unoptimized
-                      className="h-16 w-full object-contain"
-                    />
-                  </div>
-                ) : null}
-                <div className="grid gap-3 md:grid-cols-[1fr_auto]">
-                  <input
-                    className="field"
-                    placeholder="请输入短信验证码"
-                    value={smsCode}
-                    onChange={(e) => setSmsCode(e.target.value)}
+                    placeholder="请输入手机号"
+                    type="tel"
+                    value={phone}
+                    onChange={(e) => setPhone(e.target.value)}
                   />
                   <button
                     className="btn-pill"
@@ -548,40 +583,65 @@ export default function TokenClientPage({ initialToken = "" }: Props) {
                     {smsLoading ? "发送中..." : smsCountdown > 0 ? `${smsCountdown}s` : "发送短信"}
                   </button>
                 </div>
+
+                <label className="text-sm text-[var(--text-muted)]" htmlFor="sms-code">
+                  短信验证码
+                </label>
+                <input
+                  id="sms-code"
+                  className="field"
+                  placeholder="请输入短信验证码"
+                  value={smsCode}
+                  onChange={(e) => setSmsCode(e.target.value)}
+                />
               </div>
             ) : (
               <div className="grid gap-3 rounded-[12px] border border-[var(--card-border)] bg-[var(--card-bg-soft)] p-4">
-                <div className="flex flex-wrap gap-2">
-                  <button className="btn-pill" type="button" onClick={() => void createQr()} disabled={qrLoading}>
-                    {qrLoading ? "生成中..." : "生成扫码二维码"}
-                  </button>
-                  <button className="btn-pill" type="button" onClick={() => void refreshQrStatus()} disabled={qrLoading || !qrSessionId}>
-                    刷新状态
-                  </button>
-                  <button className="btn-primary" type="button" onClick={() => void confirmQrLogin()} disabled={qrLoading || !qrSessionId}>
-                    确认扫码登录
-                  </button>
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <p className="text-sm text-[var(--text-muted)]">{qrStatusText}</p>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      className="btn-pill"
+                      type="button"
+                      onClick={() => void createQrSession()}
+                      disabled={qrLoading}
+                    >
+                      {qrLoading ? "加载中..." : "重新加载二维码"}
+                    </button>
+                    <button
+                      className="btn-primary"
+                      type="button"
+                      onClick={() => void tryConfirmQrLogin(false)}
+                      disabled={!qrSessionId || qrExpired || qrVerified}
+                    >
+                      手动确认扫码
+                    </button>
+                  </div>
                 </div>
+
                 {qrImageData ? (
-                  <div className="rounded-[10px] border border-[var(--card-border)] bg-white p-3">
+                  <div className="rounded-[12px] border border-[var(--card-border)] bg-white p-4">
                     <Image
                       src={qrImageData}
                       alt="扫码二维码"
-                      width={160}
-                      height={160}
+                      width={180}
+                      height={180}
                       unoptimized
-                      className="mx-auto h-40 w-40 object-contain"
+                      className={`mx-auto h-44 w-44 object-contain transition ${
+                        qrVerified ? "blur-[3px] opacity-70" : ""
+                      }`}
                     />
+                    {qrVerified ? (
+                      <p className="mt-2 text-center text-sm text-[var(--brand-green)]">
+                        已确认扫码，可直接提交登录信息。
+                      </p>
+                    ) : null}
                   </div>
                 ) : null}
-                <p className="text-sm text-[var(--text-muted)]">
-                  {qrStatusText}
-                  {qrVerified ? <span className="ml-2 text-emerald-700">已校验</span> : null}
-                </p>
               </div>
             )}
 
-            <button className="btn-primary mt-2 w-full" type="submit" disabled={submitLoading || !cdkValid}>
+            <button className="btn-primary mt-2 w-full" type="submit" disabled={submitDisabled}>
               {submitLoading ? "提交中..." : "提交登录信息"}
             </button>
           </form>
@@ -660,7 +720,6 @@ export default function TokenClientPage({ initialToken = "" }: Props) {
                   )}
                 </button>
               </div>
-
               <button className="btn-primary mt-1 w-full" type="submit" disabled={queryLoading}>
                 {queryLoading ? "查询中..." : "查询进度"}
               </button>
@@ -673,7 +732,7 @@ export default function TokenClientPage({ initialToken = "" }: Props) {
                 <p>CDK：{queryResult.token}</p>
                 <p>CDK 状态：{statusLabel(queryResult.tokenStatus)}</p>
                 <p>开卡状态：{rechargeStatusLabel(queryResult.rechargeStatus)}</p>
-                <p>最近更新：{queryResult.updatedAt ? new Date(queryResult.updatedAt).toLocaleString() : "-"}</p>
+                <p>最近更新：{formatDate(queryResult.updatedAt)}</p>
               </div>
             ) : null}
           </div>

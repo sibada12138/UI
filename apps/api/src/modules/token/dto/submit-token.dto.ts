@@ -8,9 +8,10 @@ import {
 } from 'class-validator';
 
 export class SubmitTokenDto {
+  @IsOptional()
   @IsString()
   @Matches(/^1\d{10}$/)
-  phone: string;
+  phone?: string;
 
   @IsOptional()
   @IsString()
