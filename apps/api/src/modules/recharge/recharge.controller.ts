@@ -3,6 +3,8 @@ import { RechargeService } from './recharge.service';
 import { UpdateRechargeStatusDto } from './dto/update-recharge-status.dto';
 import { GenerateRechargeLinkDto } from './dto/generate-recharge-link.dto';
 import { CheckRechargeCapabilityDto } from './dto/check-recharge-capability.dto';
+import { BatchTaskCapabilityDto } from './dto/batch-task-capability.dto';
+import { BatchGenerateLinkDto } from './dto/batch-generate-link.dto';
 import { CurrentAdmin } from '../../common/auth/current-admin.decorator';
 import type { CurrentAdminUser } from '../../common/auth/current-admin.decorator';
 
@@ -44,5 +46,29 @@ export class RechargeController {
     @CurrentAdmin() admin?: CurrentAdminUser,
   ) {
     return this.rechargeService.checkCapability(dto, admin?.id);
+  }
+
+  @Post('batch/capability')
+  checkCapabilityByTasks(
+    @Body() dto: BatchTaskCapabilityDto,
+    @CurrentAdmin() admin?: CurrentAdminUser,
+  ) {
+    return this.rechargeService.checkCapabilityByTasks(
+      dto.taskIds,
+      dto.preferredChannel,
+      admin?.id,
+    );
+  }
+
+  @Post('batch/generate-links')
+  generateLinksByTasks(
+    @Body() dto: BatchGenerateLinkDto,
+    @CurrentAdmin() admin?: CurrentAdminUser,
+  ) {
+    return this.rechargeService.generateLinksByTasks(
+      dto.taskIds,
+      dto.preferredChannel,
+      admin?.id,
+    );
   }
 }

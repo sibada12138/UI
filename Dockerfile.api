@@ -3,7 +3,7 @@ FROM node:20-bookworm-slim
 WORKDIR /app
 
 RUN corepack enable
-RUN apt-get update -y && apt-get install -y openssl && rm -rf /var/lib/apt/lists/*
+RUN apt-get update -y && apt-get install -y openssl python3 python3-pip && rm -rf /var/lib/apt/lists/*
 
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml turbo.json ./
 COPY apps/api/package.json apps/api/package.json
@@ -11,6 +11,8 @@ COPY apps/api/package.json apps/api/package.json
 RUN pnpm install --frozen-lockfile
 
 COPY . .
+
+RUN pip3 install --no-cache-dir -r apps/api/scripts/requirements.txt
 
 RUN pnpm --filter api exec prisma generate
 RUN pnpm --filter api build

@@ -3,6 +3,7 @@ import {
   BadRequestException,
   Injectable,
 } from '@nestjs/common';
+import { createHash } from 'crypto';
 import { Prisma } from '@prisma/client';
 import { ProxyAgent } from 'undici';
 import * as QRCode from 'qrcode';
@@ -30,6 +31,13 @@ export type RechargeFlowInput = {
   orderPayload?: Record<string, PayloadValue>;
   cashierPayload?: Record<string, PayloadValue>;
   actorId?: string;
+};
+
+export type ChannelCapabilityCheck = {
+  channel: RechargeChannel;
+  canRecharge: boolean;
+  priceValue: number | null;
+  reason: string;
 };
 
 @Injectable()
@@ -171,6 +179,18 @@ export class ExternalIntegrationService {
     return typeof input === 'string' && input.trim()
       ? input.trim()
       : 'EXTERNAL_API_FAILED';
+  }
+
+  private encodeSmsCaptcha(captcha: string, unloginToken: string) {
+    const raw = String(captcha ?? '').trim().toLowerCase();
+    const token = String(unloginToken ?? '').trim();
+    if (!raw || !token) {
+      return '';
+    }
+    const first = createHash('md5')
+      .update(`${raw}${token}${this.zipVersion}`, 'utf8')
+      .digest('hex');
+    return createHash('md5').update(first, 'utf8').digest('hex');
   }
 
   private toStringRecord(source: Record<string, PayloadValue> = {}) {
@@ -330,6 +350,10 @@ export class ExternalIntegrationService {
 
   async smsSendCode(dto: SmsSendCodeDto, actorId?: string) {
     const deviceId = this.getDeviceId(dto.deviceId);
+    const encodedCaptcha = this.encodeSmsCaptcha(dto.captcha, dto.unloginToken);
+    if (!encodedCaptcha) {
+      throw new BadRequestException('CAPTCHA_INVALID');
+    }
     const url = 'https://api.account.meitu.com/common/login_verify_code';
     const form = {
       client_id: String(this.suggestClientId + 1),
@@ -345,7 +369,7 @@ export class ExternalIntegrationService {
       type: 'reset_password',
       phone_cc: String(dto.phoneCc),
       phone: normalizePhone(dto.phone),
-      captcha: dto.captcha.trim(),
+      captcha: encodedCaptcha,
     };
     const result = await this.requestJson(url, {
       method: 'POST',
@@ -678,5 +702,101 @@ export class ExternalIntegrationService {
       order: order.data,
       cashier: cashier.data,
     };
+  }
+
+  async checkRechargeChannelCapability(input: {
+    channel: RechargeChannel;
+    accessToken: string;
+    cookie?: string;
+    actorId?: string;
+  }): Promise<ChannelCapabilityCheck> {
+    const accessToken = input.accessToken.trim();
+    if (!accessToken) {
+      return {
+        channel: input.channel,
+        canRecharge: false,
+        priceValue: null,
+        reason: 'EXTERNAL_ACCESS_TOKEN_REQUIRED',
+      };
+    }
+
+    const isMobileChannel = input.channel === 'Android';
+    const commonHeaders = {
+      'Access-Token': accessToken,
+      ...(input.cookie?.trim() ? { Cookie: input.cookie.trim() } : {}),
+    };
+
+    const h5TransactionUrl =
+      process.env.EXTERNAL_RECHARGE_H5_TRANSACTION_URL?.trim() ||
+      'https://api-h5-sub.meitu.com/h5/transaction/v2/create.json';
+    const orderCreateUrl =
+      process.env.EXTERNAL_RECHARGE_ORDER_CREATE_URL?.trim() ||
+      'https://api.xiuxiu.meitu.com/v1/vip/subscription/order/create.json';
+
+    try {
+      await this.vipOverview(
+        { accessToken, cookie: input.cookie },
+        input.actorId,
+      );
+
+      if (!isMobileChannel) {
+        const tx = await this.requestJson(h5TransactionUrl, {
+          method: 'POST',
+          headers: commonHeaders,
+          form: this.toStringRecord({ channel: input.channel }),
+        });
+        this.assertApiSuccess(tx.data);
+      }
+
+      const order = await this.requestJson(orderCreateUrl, {
+        method: 'POST',
+        headers: commonHeaders,
+        form: this.toStringRecord({ channel: input.channel }),
+      });
+      this.assertApiSuccess(order.data);
+
+      const priceValue = this.findFirstNumberValue(order.data, [
+        'price',
+        'amount',
+        'pay_amount',
+        'total_fee',
+      ]);
+
+      if (!Number.isFinite(priceValue)) {
+        return {
+          channel: input.channel,
+          canRecharge: false,
+          priceValue: null,
+          reason: 'RECHARGE_PRICE_NOT_FOUND',
+        };
+      }
+
+      const canRecharge = Number(priceValue) <= 1.1;
+      await this.logAction(input.actorId, 'EXTERNAL_CHANNEL_CAPABILITY_CHECK', {
+        channel: input.channel,
+        canRecharge,
+        priceValue: Number(priceValue),
+      });
+
+      return {
+        channel: input.channel,
+        canRecharge,
+        priceValue: Number(priceValue),
+        reason: canRecharge ? 'OK' : 'RECHARGE_PRICE_NOT_ALLOWED',
+      };
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : 'CHECK_FAILED';
+      await this.logAction(input.actorId, 'EXTERNAL_CHANNEL_CAPABILITY_CHECK', {
+        channel: input.channel,
+        canRecharge: false,
+        reason,
+      });
+      return {
+        channel: input.channel,
+        canRecharge: false,
+        priceValue: null,
+        reason,
+      };
+    }
   }
 }

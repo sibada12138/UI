@@ -96,6 +96,12 @@ model UserSubmission {
   phoneHash     String
   phoneEnc      String
   smsCodeEnc    String
+  accessTokenEnc String?
+  refreshTokenEnc String?
+  externalUid   String?
+  userVipJson   Json?
+  winkVipJson   Json?
+  vipFetchedAt  DateTime?
   submitIp      String?
   userAgent     String?
   submittedAt   DateTime       @default(now())
@@ -111,6 +117,12 @@ model RechargeTask {
   id               String         @id @default(cuid())
   userSubmissionId String
   status           RechargeStatus @default(pending)
+  apiStatus        String         @default("idle")
+  apiMessage       String?
+  availableChannelsJson Json?
+  selectedChannel  String?
+  lastApiAt        DateTime?
+  lastPriceValue   Float?
   rechargeLink     String?
   qrPayload        String?
   operatorId       String?
@@ -122,6 +134,7 @@ model RechargeTask {
 
   @@index([userSubmissionId])
   @@index([status])
+  @@index([apiStatus])
   @@index([operatorId])
 }
 

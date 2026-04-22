@@ -28,6 +28,8 @@ services:
       CAPTCHA_OCR_SCRIPT: "${CAPTCHA_OCR_SCRIPT:-apps/api/scripts/yolo11_captcha.py}"
       CAPTCHA_OCR_MODEL_PATH: "${CAPTCHA_OCR_MODEL_PATH:-best.onnx}"
       CAPTCHA_OCR_CLASSES_PATH: "${CAPTCHA_OCR_CLASSES_PATH:-classes.txt}"
+      CAPTCHA_OCR_TIMEOUT_MS: "${CAPTCHA_OCR_TIMEOUT_MS:-25000}"
+      CAPTCHA_OCR_CODE_LENGTH: "${CAPTCHA_OCR_CODE_LENGTH:-4}"
     volumes:
       - api_data:/app/apps/api/data
     depends_on:

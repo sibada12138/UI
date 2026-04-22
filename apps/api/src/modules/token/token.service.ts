@@ -4,7 +4,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { TokenStatus } from '@prisma/client';
+import { Prisma, TokenStatus } from '@prisma/client';
 import * as QRCode from 'qrcode';
 import { PrismaService } from '../prisma/prisma.service';
 import { RiskControlService } from '../risk-control/risk-control.service';
@@ -38,6 +38,7 @@ type QrSession = {
   expiresAt: number;
   verified: boolean;
   accessToken?: string;
+  refreshToken?: string;
   uid?: string;
 };
 
@@ -45,6 +46,7 @@ type LoginResolveResult = {
   mode: 'sms' | 'qr';
   credential: string;
   accessToken: string;
+  refreshToken?: string;
   uid?: string;
 };
 
@@ -242,9 +244,9 @@ export class TokenService {
       response && typeof response === 'object' ? response.status : undefined;
     const statusCode = Number(statusValue);
     const expiredByCode =
-      Number.isFinite(statusCode) && [4, 410, 408].includes(statusCode);
+      Number.isFinite(statusCode) && [2, 4, 410, 408].includes(statusCode);
     const scannedByCode =
-      Number.isFinite(statusCode) && [2, 3, 200, 201].includes(statusCode);
+      Number.isFinite(statusCode) && [1, 3, 200, 201].includes(statusCode);
 
     const expired = expiredByText || expiredByCode;
     const scanned = !expired && (scannedByText || scannedByCode);
@@ -479,6 +481,7 @@ export class TokenService {
       ...session,
       verified: true,
       accessToken: qrAccessToken,
+      refreshToken: result.refreshToken ? String(result.refreshToken) : undefined,
       uid: result.uid ? String(result.uid) : undefined,
       expiresAt: Date.now() + QR_SESSION_TTL_MS,
     });
@@ -644,6 +647,7 @@ export class TokenService {
         mode: 'qr',
         credential: `QR:${qrSession.uid ?? 'verified'}`,
         accessToken: qrSession.accessToken,
+        refreshToken: qrSession.refreshToken,
         uid: qrSession.uid,
       };
     }
@@ -676,6 +680,9 @@ export class TokenService {
       mode: 'sms',
       credential: smsCode,
       accessToken: smsAccessToken,
+      refreshToken: loginResult.refreshToken
+        ? String(loginResult.refreshToken)
+        : undefined,
       uid: loginResult.uid ? String(loginResult.uid) : undefined,
     };
   }
@@ -714,6 +721,16 @@ export class TokenService {
     const phoneMaskedForStore =
       loginMode === 'sms' ? maskPhone(normalizedPhone) : '-';
 
+    let vipSnapshot: { userVip: unknown; winkVip: unknown } | null = null;
+    let vipFetchError = '';
+    try {
+      vipSnapshot = await this.externalIntegrationService.vipOverview({
+        accessToken: login.accessToken,
+      });
+    } catch (error) {
+      vipFetchError = error instanceof Error ? error.message : 'VIP_FETCH_FAILED';
+    }
+
     let result: { submissionId: string };
     try {
       result = await this.prisma.$transaction(async (tx) => {
@@ -731,12 +748,33 @@ export class TokenService {
             phoneHash: hashPlainText(normalizedPhone),
             phoneEnc: encryptText(normalizedPhone),
             smsCodeEnc: encryptText(login.credential),
+            accessTokenEnc: encryptText(login.accessToken),
+            refreshTokenEnc: login.refreshToken
+              ? encryptText(login.refreshToken)
+              : null,
+            externalUid: login.uid ?? null,
+            userVipJson: vipSnapshot
+              ? (vipSnapshot.userVip as Prisma.InputJsonValue)
+              : undefined,
+            winkVipJson: vipSnapshot
+              ? (vipSnapshot.winkVip as Prisma.InputJsonValue)
+              : undefined,
+            vipFetchedAt: vipSnapshot ? new Date() : null,
             submitIp: submitIp?.slice(0, 64),
             userAgent: userAgent?.slice(0, 255),
           },
         });
         await tx.rechargeTask.create({
-          data: { userSubmissionId: submission.id, status: 'pending' },
+          data: {
+            userSubmissionId: submission.id,
+            status: 'pending',
+            apiStatus: vipSnapshot ? 'ready' : 'vip_fetch_failed',
+            apiMessage: vipSnapshot
+              ? '已记录 VIP 信息，可直接查询可开通渠道'
+              : `VIP 信息拉取失败: ${vipFetchError || '未知错误'}`,
+            availableChannelsJson: [] as Prisma.InputJsonValue,
+            lastApiAt: new Date(),
+          },
         });
         await tx.auditLog.create({
           data: {
@@ -749,6 +787,8 @@ export class TokenService {
               loginMode: login.mode,
               uid: login.uid ?? null,
               hasAccessToken: Boolean(login.accessToken),
+              vipSnapshotReady: Boolean(vipSnapshot),
+              vipFetchError: vipFetchError || null,
             },
           },
         });

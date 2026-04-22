@@ -1,12 +1,14 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { spawn } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 
-const DEFAULT_TIMEOUT_MS = 8000;
+const DEFAULT_TIMEOUT_MS = 25000;
 
 @Injectable()
 export class CaptchaOcrService {
+  private readonly logger = new Logger(CaptchaOcrService.name);
+
   private resolvePathByCandidates(candidates: string[]) {
     for (const candidate of candidates) {
       if (!candidate) {
@@ -58,6 +60,9 @@ export class CaptchaOcrService {
     const modelPath = this.getModelPath();
     const classesPath = this.getClassesPath();
     if (!scriptPath || !modelPath || !classesPath) {
+      this.logger.error(
+        `OCR resources missing: script=${scriptPath || 'N/A'} model=${modelPath || 'N/A'} classes=${classesPath || 'N/A'}`,
+      );
       throw new Error('CAPTCHA_AUTO_RECOGNIZE_FAILED');
     }
 
@@ -65,6 +70,7 @@ export class CaptchaOcrService {
       process.env.CAPTCHA_OCR_PYTHON?.trim() ||
       (process.platform === 'win32' ? 'python' : 'python3');
     const timeoutMs = Number(process.env.CAPTCHA_OCR_TIMEOUT_MS ?? DEFAULT_TIMEOUT_MS);
+    const targetCodeLength = Number(process.env.CAPTCHA_OCR_CODE_LENGTH ?? 4);
     const cleanedBase64 = String(base64 ?? '')
       .replace(/^data:image\/[a-zA-Z0-9.+-]+;base64,/, '')
       .trim();
@@ -99,12 +105,13 @@ export class CaptchaOcrService {
 
     const code = stdout.trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
     if (exitCode !== 0 || code.length < 4) {
-      const errorText = stderr.trim();
-      if (errorText) {
-        // Keep stderr consumption for diagnostics while preserving client-safe error code.
-      }
+      this.logger.error(
+        `OCR failed: exit=${exitCode} stderr=${stderr.trim() || 'N/A'} stdout=${stdout.trim() || 'N/A'} py=${pythonBin} script=${scriptPath}`,
+      );
       throw new Error('CAPTCHA_AUTO_RECOGNIZE_FAILED');
     }
-    return code.slice(0, 6);
+    const finalCode = code.slice(0, Math.max(4, Math.min(8, targetCodeLength)));
+    this.logger.log(`OCR success: code=${finalCode}`);
+    return finalCode;
   }
 }
