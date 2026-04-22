@@ -39,6 +39,21 @@ docker compose -f infra/docker-compose.yml --env-file infra/.env up -d web
 - 按 `api -> web` 拆分，明显降低服务器瞬时负载。
 - `redis` 无改动时不需要重建。
 
+### 一键更新脚本（推荐）
+仓库已提供脚本：`infra/update.sh`
+
+使用方式：
+```bash
+cd /lishuai/rx/rx
+bash infra/update.sh
+```
+
+可选参数：
+```bash
+# 不执行 git pull（仅构建并启动）
+bash infra/update.sh --no-pull
+```
+
 ## 3. 仅改端口时
 只改 `infra/.env` 的 `WEB_PORT` 与 `APP_BASE_URL`，然后执行：
 ```bash
