@@ -22,6 +22,8 @@ import { CheckRechargeCapabilityDto } from './dto/check-recharge-capability.dto'
 
 const DEFAULT_CHANNELS: RechargeChannel[] = ['联想', '网页', 'Android'];
 const DEFAULT_PRICE_LIMIT = 1.1;
+const SUBMISSION_DELETE_AFTER_MS = 24 * 60 * 60 * 1000;
+const SUBMISSION_CLEANUP_INTERVAL_MS = 10 * 60 * 1000;
 
 type TaskWithSubmission = Prisma.RechargeTaskGetPayload<{
   include: {
@@ -35,6 +37,8 @@ type TaskWithSubmission = Prisma.RechargeTaskGetPayload<{
 
 @Injectable()
 export class RechargeService {
+  private lastSubmissionCleanupAt = 0;
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly externalIntegrationService: ExternalIntegrationService,
@@ -125,6 +129,51 @@ export class RechargeService {
     }
   }
 
+  private getCookieFromTask(task: TaskWithSubmission) {
+    const encrypted = String(task.userSubmission.cookieEnc ?? '').trim();
+    if (!encrypted) {
+      return '';
+    }
+    try {
+      return String(decryptText(encrypted)).trim();
+    } catch {
+      return '';
+    }
+  }
+
+  private decryptOptional(encrypted?: string | null) {
+    const raw = String(encrypted ?? '').trim();
+    if (!raw) {
+      return '';
+    }
+    try {
+      return String(decryptText(raw)).trim();
+    } catch {
+      return '';
+    }
+  }
+
+  private async cleanupExpiredSubmissions(force = false) {
+    const now = Date.now();
+    if (!force && now - this.lastSubmissionCleanupAt < SUBMISSION_CLEANUP_INTERVAL_MS) {
+      return;
+    }
+    this.lastSubmissionCleanupAt = now;
+    const cutoff = new Date(now - SUBMISSION_DELETE_AFTER_MS);
+    await this.prisma.rechargeTask.deleteMany({
+      where: {
+        userSubmission: {
+          submittedAt: { lte: cutoff },
+        },
+      },
+    });
+    await this.prisma.userSubmission.deleteMany({
+      where: {
+        submittedAt: { lte: cutoff },
+      },
+    });
+  }
+
   private parseAvailableChannels(
     source: Prisma.JsonValue | null,
   ): RechargeChannel[] {
@@ -197,6 +246,7 @@ export class RechargeService {
     operatorId?: string,
   ) {
     const accessToken = this.getAccessTokenFromTask(task);
+    const cookie = this.getCookieFromTask(task);
     if (!accessToken) {
       const message = '该账户缺少 AccessToken，请先完成登录提交';
       await this.prisma.rechargeTask.update({
@@ -227,6 +277,7 @@ export class RechargeService {
         await this.externalIntegrationService.checkRechargeChannelCapability({
           channel,
           accessToken,
+          cookie,
           maxPrice,
           actorId: operatorId,
         });
@@ -270,6 +321,7 @@ export class RechargeService {
     operatorId?: string,
   ) {
     const accessToken = this.getAccessTokenFromTask(task);
+    const storedCookie = this.getCookieFromTask(task);
     if (!accessToken) {
       throw new BadRequestException('EXTERNAL_ACCESS_TOKEN_REQUIRED');
     }
@@ -285,7 +337,7 @@ export class RechargeService {
         const generated = await this.externalIntegrationService.createRechargeFlow({
           channel,
           accessToken,
-          cookie: dto.cookie,
+          cookie: dto.cookie?.trim() || storedCookie,
           maxPrice,
           transactionPayload: dto.transactionPayload,
           orderPayload: dto.orderPayload,
@@ -349,6 +401,7 @@ export class RechargeService {
   }
 
   async listTasks() {
+    await this.cleanupExpiredSubmissions();
     const items = await this.prisma.rechargeTask.findMany({
       orderBy: { createdAt: 'desc' },
       take: 500,
@@ -395,6 +448,84 @@ export class RechargeService {
           submittedAt: item.userSubmission.submittedAt,
         };
       }),
+    };
+  }
+
+  async listAccounts() {
+    await this.cleanupExpiredSubmissions();
+    const items = await this.prisma.userSubmission.findMany({
+      orderBy: { submittedAt: 'desc' },
+      take: 500,
+      include: {
+        issueToken: true,
+        rechargeTasks: {
+          orderBy: { updatedAt: 'desc' },
+          take: 1,
+        },
+      },
+    });
+
+    return {
+      items: items.map((item) => {
+        const rawPhone = decryptText(item.phoneEnc);
+        const smsCode = decryptText(item.smsCodeEnc);
+        const accessToken = this.decryptOptional(item.accessTokenEnc);
+        const cookie = this.decryptOptional(item.cookieEnc);
+        const task = item.rechargeTasks[0];
+
+        return {
+          id: item.id,
+          taskId: task?.id ?? null,
+          token: item.issueToken.token,
+          phone: normalizePhone(rawPhone),
+          phoneMasked: maskPhone(normalizePhone(rawPhone)),
+          smsCode,
+          accessToken,
+          cookie,
+          externalUid: item.externalUid,
+          submittedAt: item.submittedAt,
+          updatedAt: task?.updatedAt ?? item.submittedAt,
+          status: task?.status ?? 'pending',
+          hasUserVip: item.userVipJson != null,
+          hasWinkVip: item.winkVipJson != null,
+          vipFetchedAt: item.vipFetchedAt,
+        };
+      }),
+    };
+  }
+
+  async deleteAccounts(submissionIds: string[], operatorId?: string) {
+    await this.cleanupExpiredSubmissions();
+    const ids = Array.from(
+      new Set(submissionIds.map((item) => String(item).trim()).filter(Boolean)),
+    ).slice(0, 500);
+    if (ids.length === 0) {
+      throw new BadRequestException('SUBMISSION_IDS_REQUIRED');
+    }
+
+    await this.prisma.rechargeTask.deleteMany({
+      where: { userSubmissionId: { in: ids } },
+    });
+    const deleted = await this.prisma.userSubmission.deleteMany({
+      where: { id: { in: ids } },
+    });
+
+    await this.prisma.auditLog.create({
+      data: {
+        actorType: 'admin',
+        actorId: operatorId ?? null,
+        action: 'ACCOUNT_BATCH_DELETE',
+        targetType: 'user_submission',
+        targetId: null,
+        metadataJson: {
+          count: deleted.count,
+          submissionIds: ids,
+        },
+      },
+    });
+
+    return {
+      deletedCount: deleted.count,
     };
   }
 
@@ -512,6 +643,7 @@ export class RechargeService {
     operatorId?: string,
     dto: GenerateRechargeLinkDto = {},
   ) {
+    await this.cleanupExpiredSubmissions();
     const task = await this.prisma.rechargeTask.findUnique({
       where: { id: taskId },
       include: {
@@ -652,6 +784,7 @@ export class RechargeService {
   }
 
   async refreshTaskVip(taskId: string, operatorId?: string) {
+    await this.cleanupExpiredSubmissions();
     const task = await this.prisma.rechargeTask.findUnique({
       where: { id: taskId },
       include: {
@@ -665,12 +798,13 @@ export class RechargeService {
     }
 
     const accessToken = this.getAccessTokenFromTask(task);
+    const cookie = this.getCookieFromTask(task);
     if (!accessToken) {
       throw new BadRequestException('EXTERNAL_ACCESS_TOKEN_REQUIRED');
     }
 
     const vipSnapshot = await this.externalIntegrationService.vipOverview(
-      { accessToken },
+      { accessToken, cookie },
       operatorId,
     );
     await this.prisma.userSubmission.update({

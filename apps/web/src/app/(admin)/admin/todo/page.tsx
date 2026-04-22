@@ -381,23 +381,18 @@ export default function TodoPage() {
 
       <article className="apple-panel p-5">
         <div className="grid gap-3 md:grid-cols-[220px_1fr_1fr_1fr]">
-          <div>
-            <label className="mb-2 block text-sm text-[var(--text-muted)]" htmlFor="channel-select">
-              默认充值渠道
-            </label>
-            <select
-              id="channel-select"
-              className="field w-full"
-              value={selectedChannel}
-              onChange={(e) => setSelectedChannel(e.target.value)}
-            >
-              {channels.map((item) => (
-                <option key={item} value={item}>
-                  {item}
-                </option>
-              ))}
-            </select>
-          </div>
+          <select
+            id="channel-select"
+            className="field h-11 w-full"
+            value={selectedChannel}
+            onChange={(e) => setSelectedChannel(e.target.value)}
+          >
+            {channels.map((item) => (
+              <option key={item} value={item}>
+                {item}
+              </option>
+            ))}
+          </select>
           <button className="btn-pill h-11 w-full" type="button" disabled={batchBusy} onClick={() => void runBatchCapability()}>
             批量查询可开通接口
           </button>

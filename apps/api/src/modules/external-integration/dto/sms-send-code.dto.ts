@@ -1,10 +1,4 @@
-import {
-  IsNotEmpty,
-  IsOptional,
-  IsString,
-  Matches,
-  MaxLength,
-} from 'class-validator';
+import { IsNotEmpty, IsOptional, IsString, Matches, MaxLength } from 'class-validator';
 
 export class SmsSendCodeDto {
   @IsString()
@@ -20,10 +14,11 @@ export class SmsSendCodeDto {
   @Matches(/^\d{1,4}$/)
   phoneCc!: string;
 
+  @IsOptional()
   @IsString()
   @IsNotEmpty()
   @MaxLength(16)
-  captcha!: string;
+  captcha?: string;
 
   @IsOptional()
   @IsString()

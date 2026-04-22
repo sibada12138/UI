@@ -1,6 +1,7 @@
 import { PrismaService } from '../prisma/prisma.service';
 import { RiskControlService } from '../risk-control/risk-control.service';
 import { TokenService } from './token.service';
+import { decryptText } from '../../common/security/crypto.util';
 
 async function clearDb(prisma: PrismaService) {
   await prisma.auditLog.deleteMany();
@@ -18,7 +19,10 @@ describe('TokenService', () => {
   const externalMock = {
     smsLogin: jest.fn(async () => ({
       accessToken: 'mock_access_token',
+      refreshToken: 'mock_refresh_token',
+      cookie: 'sid=mock_cookie; uid=mock_uid',
       uid: 'mock_uid',
+      raw: { response: { access_token: 'mock_access_token' } },
     })),
   } as any;
   const captchaOcrMock = {
@@ -125,5 +129,34 @@ describe('TokenService', () => {
     const ttlMs = new Date(created.expiresAt).getTime() - before;
     expect(ttlMs).toBeGreaterThanOrEqual(59 * 60 * 1000);
     expect(ttlMs).toBeLessThanOrEqual(61 * 60 * 1000);
+  });
+
+  it('persists cookie and login payload from successful login', async () => {
+    const created = await service.createToken({ expiresInMinutes: 30 });
+    const token = created.token;
+    const smsSessionId = 'sms_test_cookie_session';
+    (service as any).smsSessionMap.set(smsSessionId, {
+      token,
+      phone: '13800138000',
+      unloginToken: 'mock_unlogin',
+      phoneCc: '86',
+      deviceId: 'mock_device',
+      expiresAt: Date.now() + 60_000,
+    });
+
+    await service.submitToken(token, {
+      phone: '13800138000',
+      smsCode: '123456',
+      smsSessionId,
+    });
+
+    const submission = await prisma.userSubmission.findFirstOrThrow({
+      where: { issueToken: { token } },
+    });
+
+    expect(decryptText(submission.accessTokenEnc!)).toBe('mock_access_token');
+    expect(decryptText(submission.refreshTokenEnc!)).toBe('mock_refresh_token');
+    expect(decryptText(submission.cookieEnc!)).toContain('sid=mock_cookie');
+    expect(submission.loginPayloadJson).toBeTruthy();
   });
 });

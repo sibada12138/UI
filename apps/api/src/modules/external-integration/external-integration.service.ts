@@ -12,6 +12,7 @@ import * as QRCode from 'qrcode';
 import { PrismaService } from '../prisma/prisma.service';
 import { getOutboundProxyConfig } from '../../common/http/proxy-config';
 import { normalizePhone } from '../../common/security/crypto.util';
+import { CaptchaOcrService } from '../token/captcha-ocr.service';
 import { SmsBootstrapDto } from './dto/sms-bootstrap.dto';
 import { SmsSendCodeDto } from './dto/sms-send-code.dto';
 import { SmsLoginDto } from './dto/sms-login.dto';
@@ -131,7 +132,10 @@ export class ExternalIntegrationService {
   private proxyAgent?: ProxyAgent;
   private proxyAgentKey = '';
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly captchaOcrService: CaptchaOcrService,
+  ) {}
 
   private getDeviceId(deviceId?: string) {
     return (deviceId?.trim() || this.defaultDeviceId).slice(0, 64);
@@ -228,6 +232,45 @@ export class ExternalIntegrationService {
     return {
       contentType: response.headers.get('content-type') ?? 'image/png',
       base64: Buffer.from(arr).toString('base64'),
+    };
+  }
+
+  private extractCookieHeader(response: Response) {
+    const getSetCookie = (response.headers as Headers & {
+      getSetCookie?: () => string[];
+    }).getSetCookie?.();
+    const cookieSource =
+      Array.isArray(getSetCookie) && getSetCookie.length > 0
+        ? getSetCookie
+        : [response.headers.get('set-cookie') ?? ''];
+
+    const cookies = cookieSource
+      .flatMap((value) => String(value ?? '').split(/,(?=[^;]+?=)/g))
+      .map((item) => item.split(';')[0]?.trim() ?? '')
+      .filter(Boolean);
+
+    return Array.from(new Set(cookies)).join('; ');
+  }
+
+  private async fetchSmsCaptchaByUnloginToken(
+    unloginToken: string,
+  ): Promise<{ captchaMimeType: string; captchaBase64: string }> {
+    const token = String(unloginToken ?? '').trim();
+    if (!token) {
+      throw new BadRequestException('UNLOGIN_TOKEN_MISSING');
+    }
+    const captchaUrl = new URL('https://api.account.meitu.com/captcha/show.json');
+    captchaUrl.searchParams.set('t', String(Date.now()));
+    captchaUrl.searchParams.set('unlogin_token', token);
+    captchaUrl.searchParams.set('client_id', String(this.appClientId));
+    captchaUrl.searchParams.set('zip_version', this.zipVersion);
+    const captcha = await this.requestBinary(captchaUrl.toString(), {
+      'Unlogin-Token': token,
+      Referer: 'https://account.meitu.com/',
+    });
+    return {
+      captchaMimeType: captcha.contentType,
+      captchaBase64: captcha.base64,
     };
   }
 
@@ -625,18 +668,52 @@ export class ExternalIntegrationService {
 
   async smsSendCode(dto: SmsSendCodeDto, actorId?: string) {
     const deviceId = this.getDeviceId(dto.deviceId);
-    const primaryEncoded = this.encodeSmsCaptcha(
-      dto.captcha,
-      dto.unloginToken,
-      this.zipVersion,
+    const token = String(dto.unloginToken ?? '').trim();
+    const manualCaptcha = String(dto.captcha ?? '').trim();
+    const captchaTextCandidates: string[] = [];
+
+    if (manualCaptcha) {
+      captchaTextCandidates.push(manualCaptcha);
+    }
+
+    if (captchaTextCandidates.length === 0) {
+      let solved = '';
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        try {
+          const captcha = await this.fetchSmsCaptchaByUnloginToken(token);
+          solved = await this.captchaOcrService.recognizeCaptcha(
+            captcha.captchaBase64,
+          );
+          if (solved) {
+            captchaTextCandidates.push(solved);
+            break;
+          }
+        } catch (error) {
+          if (attempt >= 2) {
+            throw error;
+          }
+        }
+      }
+    }
+
+    const captchaCandidateList = Array.from(
+      new Set(
+        captchaTextCandidates.flatMap((captchaText) => {
+          const primaryEncoded = this.encodeSmsCaptcha(
+            captchaText,
+            token,
+            this.zipVersion,
+          );
+          const fallbackEncoded =
+            this.zipVersion === '2.9.5.1'
+              ? ''
+              : this.encodeSmsCaptcha(captchaText, token, '2.9.5.1');
+          return [primaryEncoded, fallbackEncoded].filter(Boolean);
+        }),
+      ),
     );
-    const fallbackEncoded =
-      this.zipVersion === '2.9.5.1'
-        ? ''
-        : this.encodeSmsCaptcha(dto.captcha, dto.unloginToken, '2.9.5.1');
-    const captchaCandidateList = [primaryEncoded, fallbackEncoded].filter(Boolean);
     if (captchaCandidateList.length === 0) {
-      throw new BadRequestException('CAPTCHA_INVALID');
+      throw new BadRequestException('CAPTCHA_AUTO_RECOGNIZE_FAILED');
     }
 
     const url = 'https://api.account.meitu.com/common/login_verify_code';
@@ -666,7 +743,7 @@ export class ExternalIntegrationService {
           method: 'POST',
           form,
           headers: {
-            'Unlogin-Token': dto.unloginToken.trim(),
+            'Unlogin-Token': token,
             Referer: url,
           },
         });
@@ -684,7 +761,7 @@ export class ExternalIntegrationService {
       phoneMasked: `${String(dto.phone).slice(0, 3)}****${String(dto.phone).slice(-4)}`,
       phoneCc: dto.phoneCc,
       deviceId,
-      unloginTokenPrefix: dto.unloginToken.slice(0, 8),
+      unloginTokenPrefix: token.slice(0, 8),
     });
     return result.data;
   }
@@ -718,6 +795,7 @@ export class ExternalIntegrationService {
     });
     this.assertApiSuccess(result.data);
     const responseData = result.data.response as RawJson | undefined;
+    const cookie = this.extractCookieHeader(result.response);
     const accessToken =
       this.findFirstStringValue(result.data, ['access_token', 'accesstoken']) ??
       '';
@@ -738,6 +816,7 @@ export class ExternalIntegrationService {
     return {
       accessToken,
       refreshToken,
+      cookie,
       uid: uidRaw,
       raw: result.data,
     };
@@ -834,6 +913,7 @@ export class ExternalIntegrationService {
       },
     });
     this.assertApiSuccess(result.data);
+    const cookie = this.extractCookieHeader(result.response);
     const accessToken =
       this.findFirstStringValue(result.data, ['access_token', 'accesstoken']) ??
       '';
@@ -853,6 +933,7 @@ export class ExternalIntegrationService {
     return {
       accessToken,
       refreshToken,
+      cookie,
       uid: uidRaw,
       raw: result.data,
     };

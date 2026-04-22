@@ -1,20 +1,27 @@
 "use client";
 /* eslint-disable react-hooks/set-state-in-effect */
 
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 import { adminApiRequest } from "@/lib/admin-api";
 import { toErrorMessage } from "@/lib/error-message";
 import { pushToast } from "@/lib/toast";
 
 type AccountItem = {
   id: string;
+  taskId: string | null;
+  token: string;
   phone: string;
   phoneMasked: string;
   smsCode: string;
-  token: string;
-  status: string;
+  accessToken: string;
+  cookie: string;
+  externalUid: string | null;
   submittedAt: string;
   updatedAt: string;
+  status: string;
+  hasUserVip: boolean;
+  hasWinkVip: boolean;
+  vipFetchedAt: string | null;
 };
 
 type AdminUser = {
@@ -36,7 +43,7 @@ function adminStatusLabel(status: string) {
   return status;
 }
 
-function statusLabel(status: string) {
+function taskStatusLabel(status: string) {
   if (status === "completed") return "已开";
   if (status === "pending") return "待处理";
   if (status === "link_generated") return "待充值";
@@ -46,23 +53,43 @@ function statusLabel(status: string) {
   return status;
 }
 
+function formatDate(value?: string | null) {
+  if (!value) return "-";
+  return new Date(value).toLocaleString();
+}
+
+function tokenPreview(value: string) {
+  const text = String(value || "");
+  if (!text) return "-";
+  if (text.length <= 18) return text;
+  return `${text.slice(0, 8)}...${text.slice(-8)}`;
+}
+
 export default function AccountsPage() {
   const [accounts, setAccounts] = useState<AccountItem[]>([]);
   const [admins, setAdmins] = useState<AdminUser[]>([]);
   const [message, setMessage] = useState("");
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [deleting, setDeleting] = useState(false);
 
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [role, setRole] = useState<"admin" | "operator_admin">("operator_admin");
 
+  const allSelected = useMemo(
+    () => accounts.length > 0 && accounts.every((item) => selectedIds.includes(item.id)),
+    [accounts, selectedIds],
+  );
+
   async function load() {
     try {
-      const [taskData, adminData] = await Promise.all([
-        adminApiRequest<{ items: AccountItem[] }>("/admin/recharge/tasks"),
+      const [accountData, adminData] = await Promise.all([
+        adminApiRequest<{ items: AccountItem[] }>("/admin/recharge/tasks/accounts"),
         adminApiRequest<{ items: AdminUser[] }>("/admin/admin-users"),
       ]);
-      setAccounts(taskData.items);
-      setAdmins(adminData.items);
+      setAccounts(accountData.items || []);
+      setAdmins(adminData.items || []);
+      setSelectedIds((prev) => prev.filter((id) => accountData.items.some((item) => item.id === id)));
     } catch (error) {
       const text = toErrorMessage(error, "加载账户数据失败");
       setMessage(text);
@@ -73,6 +100,50 @@ export default function AccountsPage() {
   useEffect(() => {
     void load();
   }, []);
+
+  function toggleSelect(id: string) {
+    setSelectedIds((prev) => (prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]));
+  }
+
+  function toggleSelectAll() {
+    if (allSelected) {
+      setSelectedIds([]);
+      return;
+    }
+    setSelectedIds(accounts.map((item) => item.id));
+  }
+
+  function invertSelect() {
+    setSelectedIds(accounts.filter((item) => !selectedIds.includes(item.id)).map((item) => item.id));
+  }
+
+  async function batchDeleteAccounts() {
+    if (selectedIds.length === 0) {
+      setMessage("请先选择至少一个账户。");
+      return;
+    }
+    if (typeof window !== "undefined" && !window.confirm(`确认删除选中的 ${selectedIds.length} 个账户吗？`)) {
+      return;
+    }
+
+    setDeleting(true);
+    setMessage("");
+    try {
+      const data = await adminApiRequest<{ deletedCount: number }>("/admin/recharge/tasks/accounts/delete", {
+        method: "POST",
+        body: { submissionIds: selectedIds },
+      });
+      pushToast({ type: "success", message: `已删除 ${data.deletedCount} 个账户。` });
+      setSelectedIds([]);
+      await load();
+    } catch (error) {
+      const text = toErrorMessage(error, "批量删除失败");
+      setMessage(text);
+      pushToast({ type: "error", message: text });
+    } finally {
+      setDeleting(false);
+    }
+  }
 
   async function onCreateAdmin(event: FormEvent) {
     event.preventDefault();
@@ -99,18 +170,42 @@ export default function AccountsPage() {
       <article className="apple-panel p-6">
         <h1 className="h-display section-title">账户列表</h1>
         <p className="mt-2 text-sm text-[var(--text-muted)]">
-          这里汇总用户提交的手机号、验证码与对应 CDK，用于客服人工开号处理。
+          默认保存最近 24 小时登录记录，超时自动清理。支持多选、全选、反选和批量删除。
         </p>
       </article>
 
       <article className="apple-panel p-4">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <button className="btn-pill" type="button" onClick={toggleSelectAll}>
+              {allSelected ? "取消全选" : "全选"}
+            </button>
+            <button className="btn-pill" type="button" onClick={invertSelect}>
+              反选
+            </button>
+            <button className="btn-pill" type="button" onClick={() => setSelectedIds([])}>
+              清空选择
+            </button>
+            <button className="btn-primary" type="button" disabled={deleting} onClick={() => void batchDeleteAccounts()}>
+              {deleting ? "删除中..." : "批量删除"}
+            </button>
+          </div>
+          <span className="text-sm text-[var(--text-muted)]">已选 {selectedIds.length} 项</span>
+        </div>
+
         <div className="table-shell">
           <table className="table-basic">
             <thead>
               <tr>
+                <th>
+                  <input type="checkbox" checked={allSelected} onChange={toggleSelectAll} />
+                </th>
                 <th>手机号</th>
-                <th>短信验证码</th>
                 <th>CDK</th>
+                <th>登录方式</th>
+                <th>AccessToken</th>
+                <th>Cookie</th>
+                <th>VIP</th>
                 <th>状态</th>
                 <th>提交时间</th>
                 <th>更新时间</th>
@@ -119,19 +214,37 @@ export default function AccountsPage() {
             <tbody>
               {accounts.map((item) => (
                 <tr key={item.id}>
-                  <td>{item.phone}</td>
-                  <td className="font-mono">{item.smsCode}</td>
-                  <td className="font-mono">{item.token}</td>
                   <td>
-                    <span className="status-pill">{statusLabel(item.status)}</span>
+                    <input
+                      type="checkbox"
+                      checked={selectedIds.includes(item.id)}
+                      onChange={() => toggleSelect(item.id)}
+                    />
                   </td>
-                  <td>{new Date(item.submittedAt).toLocaleString()}</td>
-                  <td>{new Date(item.updatedAt).toLocaleString()}</td>
+                  <td>{item.phoneMasked || item.phone || "-"}</td>
+                  <td className="font-mono">{item.token}</td>
+                  <td>{item.smsCode.startsWith("QR:") ? "扫码登录" : "短信登录"}</td>
+                  <td className="font-mono" title={item.accessToken || "-"}>
+                    {tokenPreview(item.accessToken)}
+                  </td>
+                  <td className="font-mono" title={item.cookie || "-"}>
+                    {tokenPreview(item.cookie)}
+                  </td>
+                  <td>
+                    {item.hasUserVip || item.hasWinkVip
+                      ? `User:${item.hasUserVip ? "Y" : "N"} Wink:${item.hasWinkVip ? "Y" : "N"}`
+                      : "-"}
+                  </td>
+                  <td>
+                    <span className="status-pill">{taskStatusLabel(item.status)}</span>
+                  </td>
+                  <td>{formatDate(item.submittedAt)}</td>
+                  <td>{formatDate(item.updatedAt)}</td>
                 </tr>
               ))}
               {accounts.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="text-[var(--text-muted)]">
+                  <td colSpan={10} className="text-[var(--text-muted)]">
                     暂无账户提交记录。
                   </td>
                 </tr>

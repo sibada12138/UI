@@ -39,7 +39,9 @@ type QrSession = {
   verified: boolean;
   accessToken?: string;
   refreshToken?: string;
+  cookie?: string;
   uid?: string;
+  raw?: unknown;
 };
 
 type LoginResolveResult = {
@@ -47,7 +49,9 @@ type LoginResolveResult = {
   credential: string;
   accessToken: string;
   refreshToken?: string;
+  cookie?: string;
   uid?: string;
+  raw?: unknown;
 };
 
 const SMS_SESSION_TTL_MS = 10 * 60 * 1000;
@@ -160,6 +164,33 @@ export class TokenService {
         expiresAt: { lte: staleCutoff },
       },
     });
+
+    await this.prisma.rechargeTask.deleteMany({
+      where: {
+        userSubmission: {
+          submittedAt: { lte: staleCutoff },
+        },
+      },
+    });
+    await this.prisma.userSubmission.deleteMany({
+      where: {
+        submittedAt: { lte: staleCutoff },
+      },
+    });
+  }
+
+  private shouldRetrySmsFlow(message: string) {
+    const normalized = String(message ?? '').toLowerCase();
+    if (!normalized) {
+      return false;
+    }
+    return (
+      normalized.includes('captcha_auto_recognize_failed') ||
+      normalized.includes('captcha') ||
+      normalized.includes('verify') ||
+      normalized.includes('验证') ||
+      normalized.includes('安全')
+    );
   }
 
   private async getActiveTokenOrThrow(token: string, submitIp?: string) {
@@ -301,38 +332,48 @@ export class TokenService {
       return { success: false, retryAfterSec: remainSec, message: 'SMS_WAIT' };
     }
 
-    const bootstrap = await this.externalIntegrationService.smsBootstrap({});
-    const solvedCaptcha = await this.captchaOcrService.recognizeCaptcha(
-      bootstrap.captchaBase64,
-    );
+    let sessionToSave: SmsSession | null = null;
+    let lastError: unknown = null;
 
-    try {
-      await this.externalIntegrationService.smsSendCode({
-        unloginToken: bootstrap.unloginToken,
-        phone: normalizedPhone,
-        phoneCc: String(bootstrap.phoneCc ?? 86),
-        captcha: solvedCaptcha,
-        deviceId: bootstrap.deviceId,
-      });
-    } catch (error) {
-      const raw = error instanceof Error ? error.message : '';
-      if (
-        raw !== 'EXTERNAL_NETWORK_ERROR' &&
-        !raw.startsWith('EXTERNAL_HTTP_5')
-      ) {
-        this.registerTokenSubmitFailure(submitIp);
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        const bootstrap = await this.externalIntegrationService.smsBootstrap({});
+        const solvedCaptcha = await this.captchaOcrService.recognizeCaptcha(
+          bootstrap.captchaBase64,
+        );
+
+        await this.externalIntegrationService.smsSendCode({
+          unloginToken: bootstrap.unloginToken,
+          phone: normalizedPhone,
+          phoneCc: String(bootstrap.phoneCc ?? 86),
+          captcha: solvedCaptcha,
+          deviceId: bootstrap.deviceId,
+        });
+
+        sessionToSave = {
+          token: normalizedToken,
+          phone: normalizedPhone,
+          unloginToken: bootstrap.unloginToken,
+          phoneCc: String(bootstrap.phoneCc ?? 86),
+          deviceId: bootstrap.deviceId,
+          expiresAt: Date.now() + SMS_SESSION_TTL_MS,
+        };
+        break;
+      } catch (error) {
+        lastError = error;
+        const raw = error instanceof Error ? error.message : '';
+        if (!this.shouldRetrySmsFlow(raw) || attempt >= 2) {
+          if (raw !== 'EXTERNAL_NETWORK_ERROR' && !raw.startsWith('EXTERNAL_HTTP_5')) {
+            this.registerTokenSubmitFailure(submitIp);
+          }
+          throw error;
+        }
       }
-      throw error;
     }
 
-    const sessionToSave: SmsSession = {
-      token: normalizedToken,
-      phone: normalizedPhone,
-      unloginToken: bootstrap.unloginToken,
-      phoneCc: String(bootstrap.phoneCc ?? 86),
-      deviceId: bootstrap.deviceId,
-      expiresAt: Date.now() + SMS_SESSION_TTL_MS,
-    };
+    if (!sessionToSave) {
+      throw (lastError as Error) ?? new BadRequestException('SMS_SEND_FAILED');
+    }
 
     const smsSessionId = createRandomToken('sms_');
     this.smsSessionMap.set(smsSessionId, sessionToSave);
@@ -456,7 +497,9 @@ export class TokenService {
       verified: true,
       accessToken: qrAccessToken,
       refreshToken: result.refreshToken ? String(result.refreshToken) : undefined,
+      cookie: result.cookie ? String(result.cookie) : undefined,
       uid: result.uid ? String(result.uid) : undefined,
+      raw: result.raw,
       expiresAt: Date.now() + QR_SESSION_TTL_MS,
     });
     this.riskControlService.resetFailure('token_submit', submitIp);
@@ -622,7 +665,9 @@ export class TokenService {
         credential: `QR:${qrSession.uid ?? 'verified'}`,
         accessToken: qrSession.accessToken,
         refreshToken: qrSession.refreshToken,
+        cookie: qrSession.cookie,
         uid: qrSession.uid,
+        raw: qrSession.raw,
       };
     }
 
@@ -657,7 +702,9 @@ export class TokenService {
       refreshToken: loginResult.refreshToken
         ? String(loginResult.refreshToken)
         : undefined,
+      cookie: loginResult.cookie ? String(loginResult.cookie) : undefined,
       uid: loginResult.uid ? String(loginResult.uid) : undefined,
+      raw: loginResult.raw,
     };
   }
 
@@ -694,6 +741,7 @@ export class TokenService {
       try {
         const credible = await this.externalIntegrationService.crediblePhone({
           accessToken: login.accessToken,
+          cookie: login.cookie,
         });
         const crediblePhone = normalizePhone(String(credible?.phone ?? ''));
         if (crediblePhone.length >= 6) {
@@ -716,6 +764,7 @@ export class TokenService {
     try {
       vipSnapshot = await this.externalIntegrationService.vipOverview({
         accessToken: login.accessToken,
+        cookie: login.cookie,
       });
     } catch (error) {
       vipFetchError = error instanceof Error ? error.message : 'VIP_FETCH_FAILED';
@@ -742,7 +791,10 @@ export class TokenService {
             refreshTokenEnc: login.refreshToken
               ? encryptText(login.refreshToken)
               : null,
+            cookieEnc: login.cookie ? encryptText(login.cookie) : null,
             externalUid: login.uid ?? null,
+            loginPayloadJson:
+              login.raw != null ? (login.raw as Prisma.InputJsonValue) : undefined,
             userVipJson: vipSnapshot
               ? (vipSnapshot.userVip as Prisma.InputJsonValue)
               : undefined,

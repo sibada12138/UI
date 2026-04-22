@@ -98,7 +98,9 @@ model UserSubmission {
   smsCodeEnc    String
   accessTokenEnc String?
   refreshTokenEnc String?
+  cookieEnc     String?
   externalUid   String?
+  loginPayloadJson Json?
   userVipJson   Json?
   winkVipJson   Json?
   vipFetchedAt  DateTime?

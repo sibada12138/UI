@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Image from "next/image";
 import { adminApiRequest } from "@/lib/admin-api";
 import { toErrorMessage } from "@/lib/error-message";
@@ -10,6 +10,17 @@ type TestResult = {
   status: "idle" | "running" | "ok" | "fail";
   detail: string;
   output: string;
+};
+
+type AccountItem = {
+  id: string;
+  token: string;
+  phone: string;
+  phoneMasked: string;
+  accessToken: string;
+  cookie: string;
+  status: string;
+  submittedAt: string;
 };
 
 function asJson(input: unknown) {
@@ -29,12 +40,13 @@ export default function ApiCenterPage() {
   const [unloginToken, setUnloginToken] = useState("");
   const [phone, setPhone] = useState("13800138000");
   const [phoneCc, setPhoneCc] = useState("86");
-  const [captcha, setCaptcha] = useState("");
   const [verifyCode, setVerifyCode] = useState("");
   const [qrCode, setQrCode] = useState("");
   const [accessToken, setAccessToken] = useState("");
   const [cookie, setCookie] = useState("");
   const [channel, setChannel] = useState("网页");
+  const [accounts, setAccounts] = useState<AccountItem[]>([]);
+  const [selectedAccountId, setSelectedAccountId] = useState("");
 
   const [smsCaptchaImage, setSmsCaptchaImage] = useState("");
   const [results, setResults] = useState<Record<string, TestResult>>({});
@@ -63,6 +75,38 @@ export default function ApiCenterPage() {
   function statusOf(key: string) {
     return results[key] ?? initResult();
   }
+
+  async function loadAccounts() {
+    try {
+      const data = await adminApiRequest<{ items: AccountItem[] }>("/admin/recharge/tasks/accounts");
+      setAccounts(data.items || []);
+      if (!selectedAccountId && data.items?.[0]?.id) {
+        const first = data.items[0];
+        setSelectedAccountId(first.id);
+        setPhone(first.phone || "");
+        setAccessToken(first.accessToken || "");
+        setCookie(first.cookie || "");
+      }
+    } catch (error) {
+      pushToast({ type: "error", message: toErrorMessage(error, "账户列表加载失败") });
+    }
+  }
+
+  function applyAccountById(accountId: string) {
+    setSelectedAccountId(accountId);
+    const target = accounts.find((item) => item.id === accountId);
+    if (!target) {
+      return;
+    }
+    setPhone(target.phone || "");
+    setAccessToken(target.accessToken || "");
+    setCookie(target.cookie || "");
+  }
+
+  useEffect(() => {
+    void loadAccounts();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   async function runCase(
     key: string,
@@ -97,11 +141,25 @@ export default function ApiCenterPage() {
       <article className="apple-panel p-6">
         <h2 className="h-display text-2xl font-semibold">测试参数</h2>
         <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+          <select
+            className="field md:col-span-2"
+            value={selectedAccountId}
+            onChange={(e) => applyAccountById(e.target.value)}
+          >
+            <option value="">从账户中心选择账号</option>
+            {accounts.map((item) => (
+              <option key={item.id} value={item.id}>
+                {item.phoneMasked || item.phone} | {item.token} | {item.status}
+              </option>
+            ))}
+          </select>
+          <button className="btn-pill md:col-span-2" type="button" onClick={() => void loadAccounts()}>
+            刷新账户列表
+          </button>
           <input className="field" placeholder="deviceId" value={deviceId} onChange={(e) => setDeviceId(e.target.value)} />
           <input className="field" placeholder="unloginToken" value={unloginToken} onChange={(e) => setUnloginToken(e.target.value)} />
           <input className="field" placeholder="手机号" value={phone} onChange={(e) => setPhone(e.target.value)} />
           <input className="field" placeholder="phoneCc" value={phoneCc} onChange={(e) => setPhoneCc(e.target.value)} />
-          <input className="field" placeholder="图形验证码（手填）" value={captcha} onChange={(e) => setCaptcha(e.target.value)} />
           <input className="field" placeholder="短信验证码" value={verifyCode} onChange={(e) => setVerifyCode(e.target.value)} />
           <input className="field" placeholder="qrCode" value={qrCode} onChange={(e) => setQrCode(e.target.value)} />
           <select className="field" value={channel} onChange={(e) => setChannel(e.target.value)}>
@@ -197,7 +255,7 @@ export default function ApiCenterPage() {
                       void runCase("sms_send", "发送短信", () =>
                         adminApiRequest("/admin/external/sms/send-code", {
                           method: "POST",
-                          body: { unloginToken, phone, phoneCc, captcha, deviceId },
+                          body: { unloginToken, phone, phoneCc, deviceId },
                         }),
                       )
                     }
@@ -225,9 +283,12 @@ export default function ApiCenterPage() {
                             body: { unloginToken, phone, phoneCc, verifyCode, deviceId },
                           }),
                         (raw) => {
-                          const data = raw as { accessToken?: string };
+                          const data = raw as { accessToken?: string; cookie?: string };
                           if (data.accessToken) {
                             setAccessToken(String(data.accessToken));
+                          }
+                          if (data.cookie) {
+                            setCookie(String(data.cookie));
                           }
                         },
                       )
@@ -330,8 +391,9 @@ export default function ApiCenterPage() {
                             body: { qrCode, unloginToken, deviceId },
                           }),
                         (raw) => {
-                          const data = raw as { accessToken?: string };
+                          const data = raw as { accessToken?: string; cookie?: string };
                           if (data.accessToken) setAccessToken(String(data.accessToken));
+                          if (data.cookie) setCookie(String(data.cookie));
                         },
                       )
                     }

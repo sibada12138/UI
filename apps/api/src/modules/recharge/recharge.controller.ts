@@ -5,6 +5,7 @@ import { GenerateRechargeLinkDto } from './dto/generate-recharge-link.dto';
 import { CheckRechargeCapabilityDto } from './dto/check-recharge-capability.dto';
 import { BatchTaskCapabilityDto } from './dto/batch-task-capability.dto';
 import { BatchGenerateLinkDto } from './dto/batch-generate-link.dto';
+import { DeleteAccountsDto } from './dto/delete-accounts.dto';
 import { CurrentAdmin } from '../../common/auth/current-admin.decorator';
 import type { CurrentAdminUser } from '../../common/auth/current-admin.decorator';
 
@@ -15,6 +16,19 @@ export class RechargeController {
   @Get()
   list() {
     return this.rechargeService.listTasks();
+  }
+
+  @Get('accounts')
+  listAccounts() {
+    return this.rechargeService.listAccounts();
+  }
+
+  @Post('accounts/delete')
+  deleteAccounts(
+    @Body() dto: DeleteAccountsDto,
+    @CurrentAdmin() admin?: CurrentAdminUser,
+  ) {
+    return this.rechargeService.deleteAccounts(dto.submissionIds, admin?.id);
   }
 
   @Post(':id/generate-link')
