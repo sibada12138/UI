@@ -47,7 +47,7 @@ docker compose -f infra/docker-compose.yml --env-file infra/.env up -d web
 cd /lishuai/rx/rx
 bash infra/update.sh
 ```
-说明：默认是 `auto` 模式，会自动分步执行并按改动判断只更新必要服务。
+说明：默认是 `auto` 模式，会自动分步执行，且每次都按 `api -> web` 逐条重建并启动（不再依赖是否检测到代码改动）。
 
 可选参数：
 ```bash
@@ -72,6 +72,9 @@ bash infra/update.sh web-up --no-pull
 
 # 自动模式增加重试能力
 bash infra/update.sh auto --retry=3 --sleep=5
+
+# 自动模式只重启（不构建）
+bash infra/update.sh auto --no-build
 ```
 
 ## 3. 仅改端口时

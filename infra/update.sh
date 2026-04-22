@@ -20,7 +20,7 @@ usage() {
   bash infra/update.sh [阶段] [选项]
 
 阶段:
-  auto      默认。自动 pull 后按改动判断只更新必要服务（推荐）
+  auto      默认。自动 pull 后始终按顺序重建 api/web 并启动（推荐）
   all       拉代码 + 构建并启动 api/web
   prepare   仅检查环境并 git pull
   api       仅构建并启动 api（会同时拉起 redis）
@@ -218,28 +218,15 @@ detect_need_web() {
 run_auto() {
   pull_latest
 
-  local need_api=0
-  local need_web=0
-
-  if [ "$NO_PULL" -eq 1 ]; then
-    # 手动跳过 pull 时，无法可靠判断差异，默认两边都更新。
-    need_api=1
-    need_web=1
-  elif [ -z "$CHANGED_FILES" ]; then
-    log "未检测到代码更新，跳过构建。"
-    if [ "$(running_service_count)" = "0" ]; then
-      run_with_retry "stack-up-no-build" ensure_stack_up_no_build
-    fi
-  else
-    if detect_need_api "$CHANGED_FILES"; then need_api=1; fi
-    if detect_need_web "$CHANGED_FILES"; then need_web=1; fi
-  fi
+  # 强制逐条更新：不依赖 git pull 结果与代码差异，避免“看起来没更新”导致遗漏。
+  local need_api=1
+  local need_web=1
 
   if [ "$NO_BUILD" -eq 1 ]; then
     if [ "$need_api" -eq 1 ]; then run_with_retry "api-up" up_service api; fi
     if [ "$need_web" -eq 1 ]; then run_with_retry "web-up" up_service web; fi
     show_status
-    log "完成阶段: auto（no-build）"
+    log "完成阶段: auto（no-build，已按顺序重启服务）"
     return
   fi
 
@@ -253,7 +240,7 @@ run_auto() {
   fi
 
   show_status
-  log "完成阶段: auto"
+  log "完成阶段: auto（已按顺序重建 api -> web）"
 }
 
 main() {
