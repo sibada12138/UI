@@ -83,12 +83,12 @@ main() {
   fi
 
   log "构建 API 镜像..."
-  compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" build api --progress=plain
+  compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" build api
   log "启动 API 服务..."
   compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" up -d api
 
   log "构建 Web 镜像..."
-  compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" build web --progress=plain
+  compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" build web
   log "启动 Web 服务..."
   compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" up -d web
 
