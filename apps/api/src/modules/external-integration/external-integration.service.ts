@@ -40,6 +40,12 @@ export type ChannelCapabilityCheck = {
   reason: string;
 };
 
+export type CrediblePhoneResult = {
+  phone: string;
+  phoneCc: string;
+  phoneType: string;
+};
+
 @Injectable()
 export class ExternalIntegrationService {
   private readonly suggestClientId = process.env.EXTERNAL_SUGGEST_CLIENT_ID
@@ -418,17 +424,27 @@ export class ExternalIntegrationService {
     });
     this.assertApiSuccess(result.data);
     const responseData = result.data.response as RawJson | undefined;
+    const accessToken =
+      this.findFirstStringValue(result.data, ['access_token', 'accesstoken']) ??
+      '';
+    const refreshToken =
+      this.findFirstStringValue(result.data, ['refresh_token', 'refreshtoken']) ??
+      '';
+    const uidRaw =
+      this.findFirstNumberValue(result.data, ['uid']) ??
+      this.findFirstStringValue(result.data, ['uid']) ??
+      null;
 
     await this.logAction(actorId, 'EXTERNAL_SMS_LOGIN', {
-      uid: responseData?.uid ?? null,
-      hasToken: Boolean(responseData?.access_token),
+      uid: uidRaw,
+      hasToken: Boolean(accessToken),
       deviceId,
     });
 
     return {
-      accessToken: responseData?.access_token ?? '',
-      refreshToken: responseData?.refresh_token ?? '',
-      uid: responseData?.uid ?? null,
+      accessToken,
+      refreshToken,
+      uid: uidRaw,
       raw: result.data,
     };
   }
@@ -524,18 +540,84 @@ export class ExternalIntegrationService {
       },
     });
     this.assertApiSuccess(result.data);
-    const responseData = result.data.response as RawJson | undefined;
+    const accessToken =
+      this.findFirstStringValue(result.data, ['access_token', 'accesstoken']) ??
+      '';
+    const refreshToken =
+      this.findFirstStringValue(result.data, ['refresh_token', 'refreshtoken']) ??
+      '';
+    const uidRaw =
+      this.findFirstNumberValue(result.data, ['uid']) ??
+      this.findFirstStringValue(result.data, ['uid']) ??
+      null;
 
     await this.logAction(actorId, 'EXTERNAL_QR_LOGIN', {
-      uid: responseData?.uid ?? null,
-      hasToken: Boolean(responseData?.access_token),
+      uid: uidRaw,
+      hasToken: Boolean(accessToken),
     });
 
     return {
-      accessToken: responseData?.access_token ?? '',
-      refreshToken: responseData?.refresh_token ?? '',
-      uid: responseData?.uid ?? null,
+      accessToken,
+      refreshToken,
+      uid: uidRaw,
       raw: result.data,
+    };
+  }
+
+  async crediblePhone(
+    dto: { accessToken: string; cookie?: string },
+    actorId?: string,
+  ): Promise<CrediblePhoneResult | null> {
+    const accessToken = String(dto.accessToken ?? '').trim();
+    if (!accessToken) {
+      throw new BadRequestException('EXTERNAL_ACCESS_TOKEN_REQUIRED');
+    }
+    const result = await this.requestJson(
+      'https://api.account.meitu.com/users_safety/credible_phone.json',
+      {
+        method: 'GET',
+        headers: {
+          'Access-Token': accessToken,
+          ...(dto.cookie?.trim() ? { Cookie: dto.cookie.trim() } : {}),
+        },
+      },
+    );
+    this.assertApiSuccess(result.data);
+
+    const responseData = result.data.response as RawJson | undefined;
+    const data = Array.isArray(responseData?.data)
+      ? (responseData?.data as RawJson[])
+      : [];
+    const first =
+      data.find(
+        (item) =>
+          this.findFirstStringValue(item, ['phone_type']) === 'bind_phone',
+      ) ?? data[0];
+
+    const phone =
+      this.findFirstStringValue(first, ['phone']) ??
+      this.findFirstStringValue(responseData, ['phone']) ??
+      '';
+    const phoneCc =
+      this.findFirstStringValue(first, ['phone_cc']) ??
+      this.findFirstStringValue(responseData, ['phone_cc']) ??
+      '';
+    const phoneType =
+      this.findFirstStringValue(first, ['phone_type']) ?? 'bind_phone';
+
+    await this.logAction(actorId, 'EXTERNAL_CREDIBLE_PHONE', {
+      hasPhone: Boolean(phone),
+      phoneCc,
+      phoneType,
+    });
+
+    if (!phone) {
+      return null;
+    }
+    return {
+      phone,
+      phoneCc,
+      phoneType,
     };
   }
 

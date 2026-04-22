@@ -35,7 +35,6 @@ export default function ApiCenterPage() {
   const [accessToken, setAccessToken] = useState("");
   const [cookie, setCookie] = useState("");
   const [channel, setChannel] = useState("网页");
-  const [yoloImageBase64, setYoloImageBase64] = useState("");
 
   const [smsCaptchaImage, setSmsCaptchaImage] = useState("");
   const [results, setResults] = useState<Record<string, TestResult>>({});
@@ -133,6 +132,9 @@ export default function ApiCenterPage() {
 
       <article className="apple-panel p-4">
         <h2 className="mb-3 text-xl font-semibold">短信链路</h2>
+        <p className="mb-3 text-sm text-[var(--text-muted)]">
+          图形验证码由后端自动调用 YOLO 识别并发送短信，本页不再提供单独 YOLO 测试接口。
+        </p>
         <div className="table-shell">
           <table className="table-basic">
             <thead>
@@ -173,7 +175,6 @@ export default function ApiCenterPage() {
                           if (data.captchaMimeType && data.captchaBase64) {
                             const imageData = `data:${data.captchaMimeType};base64,${data.captchaBase64}`;
                             setSmsCaptchaImage(imageData);
-                            setYoloImageBase64(imageData);
                           }
                         },
                       )
@@ -238,40 +239,6 @@ export default function ApiCenterPage() {
               </tr>
             </tbody>
           </table>
-        </div>
-      </article>
-
-      <article className="apple-panel p-4">
-        <h2 className="mb-3 text-xl font-semibold">YOLO 识别测试</h2>
-        <div className="rounded-[12px] border border-[var(--card-border)] bg-[var(--card-bg-soft)] p-4">
-          <textarea
-            className="field min-h-24 w-full py-2"
-            placeholder="粘贴验证码 base64 或 data:image/...;base64,...（默认会自动填入 sms/bootstrap 返回的验证码图）"
-            value={yoloImageBase64}
-            onChange={(e) => setYoloImageBase64(e.target.value)}
-          />
-          <div className="mt-3 flex items-center gap-3">
-            <button
-              className="btn-pill"
-              type="button"
-              onClick={() =>
-                void runCase("yolo_test", "YOLO识别测试", () =>
-                  adminApiRequest("/admin/ocr/yolo/test", {
-                    method: "POST",
-                    body: { imageBase64: yoloImageBase64 },
-                  }),
-                )
-              }
-            >
-              执行识别测试
-            </button>
-            <span className="text-sm text-[var(--text-muted)]">
-              {statusOf("yolo_test").detail} / {statusOf("yolo_test").status}
-            </span>
-          </div>
-          <p className="mt-2 text-xs text-[var(--text-muted)]">
-            识别失败会自动写入审计日志（动作名：YOLO_OCR_TEST），并在 API 服务日志输出详细错误。
-          </p>
         </div>
       </article>
 

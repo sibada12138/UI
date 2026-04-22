@@ -600,4 +600,65 @@ export class RechargeService {
       updatedAt: updated.updatedAt,
     };
   }
+
+  async refreshTaskVip(taskId: string, operatorId?: string) {
+    const task = await this.prisma.rechargeTask.findUnique({
+      where: { id: taskId },
+      include: {
+        userSubmission: {
+          include: { issueToken: true },
+        },
+      },
+    });
+    if (!task) {
+      throw new NotFoundException('RECHARGE_TASK_NOT_FOUND');
+    }
+
+    const accessToken = this.getAccessTokenFromTask(task);
+    if (!accessToken) {
+      throw new BadRequestException('EXTERNAL_ACCESS_TOKEN_REQUIRED');
+    }
+
+    const vipSnapshot = await this.externalIntegrationService.vipOverview(
+      { accessToken },
+      operatorId,
+    );
+    await this.prisma.userSubmission.update({
+      where: { id: task.userSubmissionId },
+      data: {
+        userVipJson: vipSnapshot.userVip as Prisma.InputJsonValue,
+        winkVipJson: vipSnapshot.winkVip as Prisma.InputJsonValue,
+        vipFetchedAt: new Date(),
+      },
+    });
+    const updated = await this.prisma.rechargeTask.update({
+      where: { id: taskId },
+      data: {
+        apiStatus: 'vip_refreshed',
+        apiMessage: 'VIP 信息已刷新',
+        lastApiAt: new Date(),
+      },
+    });
+
+    await this.prisma.auditLog.create({
+      data: {
+        actorType: 'admin',
+        actorId: operatorId ?? null,
+        action: 'RECHARGE_TASK_VIP_REFRESH',
+        targetType: 'recharge_task',
+        targetId: taskId,
+        metadataJson: {
+          hasUserVip: true,
+          hasWinkVip: true,
+        },
+      },
+    });
+
+    return {
+      taskId,
+      status: updated.status,
+      apiStatus: updated.apiStatus,
+      apiMessage: updated.apiMessage,
+    };
+  }
 }

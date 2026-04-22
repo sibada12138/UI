@@ -91,17 +91,6 @@ function tokenStatusLabel(status: string) {
   return status;
 }
 
-function apiStatusLabel(status: string) {
-  if (status === "idle") return "未检测";
-  if (status === "ready") return "可检测";
-  if (status === "vip_fetch_failed") return "VIP获取失败";
-  if (status === "missing_access_token") return "无访问令牌";
-  if (status === "channel_ready") return "可开通";
-  if (status === "channel_unavailable") return "不可开通";
-  if (status === "recharge_link_generated") return "链接已生成";
-  return status;
-}
-
 function formatDate(value?: string | null) {
   if (!value) return "-";
   return new Date(value).toLocaleString();
@@ -206,6 +195,18 @@ export default function TodoPage() {
     }
   }
 
+  async function copyCdkLink(token: string) {
+    try {
+      const copied = await copyToClipboard(buildCdkLink(token));
+      pushToast({
+        type: copied ? "success" : "error",
+        message: copied ? "客户链接已复制。" : "复制失败。",
+      });
+    } catch {
+      pushToast({ type: "error", message: "复制失败。" });
+    }
+  }
+
   function toggleSelect(taskId: string) {
     setSelectedTaskIds((prev) =>
       prev.includes(taskId) ? prev.filter((id) => id !== taskId) : [...prev, taskId],
@@ -238,6 +239,21 @@ export default function TodoPage() {
     }
   }
 
+  async function refreshVip(taskId: string) {
+    setMessage("");
+    try {
+      await adminApiRequest(`/admin/recharge/tasks/${taskId}/refresh-vip`, {
+        method: "POST",
+      });
+      pushToast({ type: "success", message: "VIP 信息已刷新。" });
+      await load();
+    } catch (error) {
+      const text = toErrorMessage(error, "刷新 VIP 失败");
+      setMessage(text);
+      pushToast({ type: "error", message: text });
+    }
+  }
+
   async function runBatchCapability() {
     if (selectedTaskIds.length === 0) {
       setMessage("请先选择至少一个待办任务。");
@@ -248,13 +264,26 @@ export default function TodoPage() {
     setMessage("");
     setGenerateResult(null);
     try {
-      const data = await adminApiRequest<BatchCapabilityResponse>("/admin/recharge/tasks/batch/capability", {
-        method: "POST",
-        body: {
-          taskIds: selectedTaskIds,
-          preferredChannel: selectedChannel,
-        },
-      });
+      const body = {
+        taskIds: selectedTaskIds,
+        preferredChannel: selectedChannel,
+      };
+      let data: BatchCapabilityResponse;
+      try {
+        data = await adminApiRequest<BatchCapabilityResponse>("/admin/recharge/tasks/batch/capability", {
+          method: "POST",
+          body,
+        });
+      } catch (error) {
+        const raw = error instanceof Error ? error.message : "";
+        if (!raw.includes("Cannot POST")) {
+          throw error;
+        }
+        data = await adminApiRequest<BatchCapabilityResponse>("/admin/recharge/tasks/batch/check-capability", {
+          method: "POST",
+          body,
+        });
+      }
       setCapabilityResult(data);
       pushToast({
         type: "success",
@@ -347,16 +376,11 @@ export default function TodoPage() {
               多选账号后可批量查询可开通接口，并批量生成开通链接。
             </p>
           </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <button className="btn-primary" onClick={() => void createCdk()} type="button">
-              新增 CDK（1 小时）
-            </button>
-          </div>
         </div>
       </article>
 
       <article className="apple-panel p-5">
-        <div className="grid gap-3 md:grid-cols-[220px_1fr_auto_auto]">
+        <div className="grid gap-3 md:grid-cols-[220px_1fr_1fr_1fr]">
           <div>
             <label className="mb-2 block text-sm text-[var(--text-muted)]" htmlFor="channel-select">
               默认充值渠道
@@ -374,21 +398,23 @@ export default function TodoPage() {
               ))}
             </select>
           </div>
-          <div className="rounded-xl border border-[var(--card-border)] bg-[var(--card-bg-soft)] px-4 py-3 text-sm text-[var(--text-muted)]">
-            <p>查询可开通接口：批量查询选中账户可使用的接口，若默认渠道价格不为 1.1 会自动切换最近可用渠道。</p>
-            <p className="mt-1">已选任务数：{selectedTaskIds.length}</p>
-          </div>
-          <button className="btn-pill" type="button" disabled={batchBusy} onClick={() => void runBatchCapability()}>
+          <button className="btn-pill h-11 w-full" type="button" disabled={batchBusy} onClick={() => void runBatchCapability()}>
             批量查询可开通接口
           </button>
-          <button className="btn-primary" type="button" disabled={batchBusy} onClick={() => void runBatchGenerateLinks()}>
+          <button className="btn-primary h-11 w-full" type="button" disabled={batchBusy} onClick={() => void runBatchGenerateLinks()}>
             批量生成开通链接
+          </button>
+          <button className="btn-primary h-11 w-full" onClick={() => void createCdk()} type="button">
+            新增 CDK（1 小时）
           </button>
         </div>
       </article>
 
       <article className="apple-panel p-4">
-        <h2 className="mb-3 text-xl font-semibold">等待开号列表</h2>
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <h2 className="text-xl font-semibold">等待开号列表</h2>
+          <span className="text-sm text-[var(--text-muted)]">已选择待开通数量：{selectedTaskIds.length}</span>
+        </div>
         <div className="table-shell">
           <table className="table-basic">
             <thead>
@@ -399,14 +425,14 @@ export default function TodoPage() {
                 <th className="min-w-[120px]">手机号</th>
                 <th className="min-w-[220px]">CDK</th>
                 <th className="min-w-[96px]">开号状态</th>
-                <th className="min-w-[110px]">API 状态</th>
                 <th className="min-w-[180px]">可用渠道</th>
                 <th className="min-w-[96px]">当前渠道</th>
                 <th className="min-w-[260px]">状态提示</th>
                 <th className="min-w-[130px]">VIP</th>
                 <th className="min-w-[220px]">开通链接</th>
+                <th className="min-w-[110px]">二维码</th>
                 <th className="min-w-[170px]">更新时间</th>
-                <th className="min-w-[220px]">操作</th>
+                <th className="min-w-[180px]">操作</th>
               </tr>
             </thead>
             <tbody>
@@ -420,41 +446,67 @@ export default function TodoPage() {
                     />
                   </td>
                   <td>{item.phoneMasked}</td>
-                  <td className="font-mono">{item.token}</td>
+                  <td>
+                    <button
+                      type="button"
+                      className="cursor-pointer font-mono text-[var(--brand-green-accent)] hover:underline"
+                      onClick={() => void copyRechargeLink(item.rechargeLink)}
+                      title="点击复制该任务的充值链接"
+                    >
+                      {item.token}
+                    </button>
+                  </td>
                   <td>
                     <span className="status-pill">{taskStatusLabel(item.status)}</span>
                   </td>
-                  <td>{apiStatusLabel(item.apiStatus)}</td>
                   <td>{item.availableChannels?.join(" / ") || "-"}</td>
                   <td>{item.selectedChannel || "-"}</td>
                   <td className="max-w-[300px] whitespace-normal break-all">
                     {item.apiMessage || "-"}
                   </td>
                   <td>
-                    {item.hasUserVip || item.hasWinkVip
-                      ? `User:${item.hasUserVip ? "Y" : "N"} Wink:${item.hasWinkVip ? "Y" : "N"}`
-                      : "-"}
+                    <button
+                      type="button"
+                      className="cursor-pointer text-[var(--brand-green-accent)] hover:underline"
+                      onClick={() => void refreshVip(item.id)}
+                      title="点击刷新该账号 VIP 信息"
+                    >
+                      {item.hasUserVip || item.hasWinkVip
+                        ? `User:${item.hasUserVip ? "Y" : "N"} Wink:${item.hasWinkVip ? "Y" : "N"}`
+                        : "刷新 VIP"}
+                    </button>
                   </td>
                   <td className="max-w-[280px] whitespace-normal break-all">
                     {item.rechargeLink || "-"}
                   </td>
+                  <td>
+                    {item.qrPayload ? (
+                      <button
+                        type="button"
+                        className="inline-flex rounded-[10px] border border-[var(--card-border)] bg-white p-1"
+                        onClick={() => setQrPreview({ token: item.token, payload: item.qrPayload! })}
+                        title="点击放大二维码"
+                      >
+                        <Image
+                          src={item.qrPayload}
+                          alt="充值二维码缩略图"
+                          width={48}
+                          height={48}
+                          unoptimized
+                          className="h-12 w-12 object-contain"
+                        />
+                      </button>
+                    ) : (
+                      "-"
+                    )}
+                  </td>
                   <td>{formatDate(item.updatedAt)}</td>
                   <td>
                     <div className="table-actions">
-                      <button className="btn-pill" onClick={() => void copyRechargeLink(item.rechargeLink)} type="button">
-                        复制充值链接
-                      </button>
-                      <button
-                        className="btn-pill"
-                        onClick={() => item.qrPayload && setQrPreview({ token: item.token, payload: item.qrPayload })}
-                        type="button"
-                      >
-                        充值二维码
-                      </button>
-                      <button className="btn-pill" onClick={() => void generateLink(item.id)} type="button">
+                      <button className="btn-pill h-9 min-w-[96px]" onClick={() => void generateLink(item.id)} type="button">
                         生成开通链接
                       </button>
-                      <button className="btn-primary" onClick={() => void completeTask(item.id)} type="button">
+                      <button className="btn-primary h-9 min-w-[96px]" onClick={() => void completeTask(item.id)} type="button">
                         标记已开
                       </button>
                     </div>
@@ -487,7 +539,16 @@ export default function TodoPage() {
             <tbody>
               {cdks.map((item) => (
                 <tr key={item.id}>
-                  <td className="font-mono">{item.token}</td>
+                  <td>
+                    <button
+                      type="button"
+                      className="cursor-pointer font-mono text-[var(--brand-green-accent)] hover:underline"
+                      onClick={() => void copyCdkLink(item.token)}
+                      title="点击复制客户登录链接"
+                    >
+                      {item.token}
+                    </button>
+                  </td>
                   <td>{tokenStatusLabel(item.status)}</td>
                   <td>{formatDate(item.expiresAt)}</td>
                 </tr>

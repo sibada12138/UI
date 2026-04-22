@@ -711,10 +711,26 @@ export class TokenService {
       }
       throw error;
     }
-    const normalizedPhone =
+    let resolvedPhoneRaw =
       loginMode === 'sms'
         ? normalizePhone(String(dto.phone ?? ''))
         : this.buildPseudoPhone(login.uid ?? normalizedToken);
+
+    if (loginMode === 'qr') {
+      try {
+        const credible = await this.externalIntegrationService.crediblePhone({
+          accessToken: login.accessToken,
+        });
+        const crediblePhone = normalizePhone(String(credible?.phone ?? ''));
+        if (crediblePhone.length >= 6) {
+          resolvedPhoneRaw = crediblePhone;
+        }
+      } catch {
+        // ignore credible_phone errors; QR mode keeps pseudo phone fallback
+      }
+    }
+
+    const normalizedPhone = resolvedPhoneRaw;
     if (loginMode === 'sms' && !/^1\d{10}$/.test(normalizedPhone)) {
       throw new BadRequestException('PHONE_INVALID');
     }

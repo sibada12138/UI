@@ -60,6 +60,18 @@ export class RechargeController {
     );
   }
 
+  @Post('batch/check-capability')
+  checkCapabilityByTasksAlias(
+    @Body() dto: BatchTaskCapabilityDto,
+    @CurrentAdmin() admin?: CurrentAdminUser,
+  ) {
+    return this.rechargeService.checkCapabilityByTasks(
+      dto.taskIds,
+      dto.preferredChannel,
+      admin?.id,
+    );
+  }
+
   @Post('batch/generate-links')
   generateLinksByTasks(
     @Body() dto: BatchGenerateLinkDto,
@@ -70,5 +82,13 @@ export class RechargeController {
       dto.preferredChannel,
       admin?.id,
     );
+  }
+
+  @Post(':id/refresh-vip')
+  refreshVip(
+    @Param('id') id: string,
+    @CurrentAdmin() admin?: CurrentAdminUser,
+  ) {
+    return this.rechargeService.refreshTaskVip(id, admin?.id);
   }
 }
