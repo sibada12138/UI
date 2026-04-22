@@ -1,0 +1,43 @@
+{
+  "联想": {
+    "createMode": "h5_transaction",
+    "appId": "6829803307010000000",
+    "payChannel": "lenovo",
+    "h5Payload": {
+      "productId": "7404045067775924234",
+      "promotionId": "7404045237741709410",
+      "tradeSessionId": "7452615311004039822"
+    }
+  },
+  "网页": {
+    "createMode": "h5_transaction",
+    "appId": "6829803307010000000",
+    "payChannel": "alipay",
+    "h5Payload": {
+      "productId": "7128304588855461619",
+      "promotionId": "7128304882968448028",
+      "tradeSessionId": "7452615311528057245"
+    }
+  },
+  "Android": {
+    "createMode": "android_order",
+    "appId": "6184556633574670337",
+    "payChannel": "alipay",
+    "androidPayload": {
+      "id": "6917711922213447365",
+      "purchase_type": "1",
+      "product_type": "1",
+      "promotional_type": "11",
+      "renew_sign_mode": "1",
+      "ext": "{\"entrance\":\"new_pageEntrance\",\"touch_type\":\"5\",\"location\":\"9\",\"hb_source\":\"99\",\"user_type\":\"0\",\"page_id\":\"vip_page\",\"MT_PAY_CHANNEL\":\"alipay\",\"vipSource\":\"1001\",\"functionId\":\"\"}",
+      "sku_num": "",
+      "client_brand": "OnePlus",
+      "client_channel_id": "taobao",
+      "client_id": "1089867602",
+      "country_code": "CN",
+      "sigEnv": "0",
+      "user_agent": "mtxx-111700-OnePlus-KB2000-android-11-706a1555",
+      "version": "11.17.0"
+    }
+  }
+}

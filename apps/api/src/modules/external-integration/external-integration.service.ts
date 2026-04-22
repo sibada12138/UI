@@ -4,6 +4,8 @@ import {
   Injectable,
 } from '@nestjs/common';
 import { createHash, randomBytes } from 'crypto';
+import { promises as fs } from 'fs';
+import path from 'path';
 import { Prisma } from '@prisma/client';
 import { ProxyAgent } from 'undici';
 import * as QRCode from 'qrcode';
@@ -21,20 +23,26 @@ import { VipOverviewDto } from './dto/vip-overview.dto';
 type RawJson = Record<string, unknown>;
 type PayloadValue = string | number | boolean;
 
+export type RechargeChannel = '联想' | '网页' | 'Android';
+
+type RechargeChannelRuntimeConfig = {
+  createMode: 'h5_transaction' | 'android_order';
+  appId: string;
+  payChannel: 'alipay' | 'lenovo';
+  h5Payload?: Record<string, string>;
+  androidPayload?: Record<string, string>;
+};
+
+type RechargeChannelConfigMap = Record<
+  RechargeChannel,
+  RechargeChannelRuntimeConfig
+>;
+
 const APP_SIG_SIGN_KEY = 'Tw5AY783H@EU3#XC';
 const APP_SIG_VERSION = '1.3';
 const APP_SIG_DEFAULT_APP_ID = '6184556633574670337';
 
-const CHANNEL_DEFAULTS: Record<
-  RechargeChannel,
-  {
-    createMode: 'h5_transaction' | 'android_order';
-    appId: string;
-    payChannel: 'alipay' | 'lenovo';
-    h5Payload?: Record<string, string>;
-    androidPayload?: Record<string, string>;
-  }
-> = {
+const CHANNEL_DEFAULTS: RechargeChannelConfigMap = {
   联想: {
     createMode: 'h5_transaction',
     appId: '6829803307010000000',
@@ -77,8 +85,6 @@ const CHANNEL_DEFAULTS: Record<
     },
   },
 };
-
-export type RechargeChannel = '联想' | '网页' | 'Android';
 
 export type RechargeFlowInput = {
   channel: RechargeChannel;
@@ -346,8 +352,120 @@ export class ExternalIntegrationService {
     return matched?.[0] ?? '';
   }
 
-  private getRechargeChannelConfig(channel: RechargeChannel) {
-    return CHANNEL_DEFAULTS[channel];
+  private getRechargeChannelConfigFilePath() {
+    const configured = process.env.EXTERNAL_RECHARGE_CHANNEL_CONFIG_FILE?.trim();
+    if (configured) {
+      return path.isAbsolute(configured)
+        ? configured
+        : path.resolve(process.cwd(), configured);
+    }
+    return path.resolve(process.cwd(), './data/recharge-channel-config.json');
+  }
+
+  private async ensureRechargeChannelConfigFile() {
+    const filePath = this.getRechargeChannelConfigFilePath();
+    await fs.mkdir(path.dirname(filePath), { recursive: true });
+    try {
+      await fs.access(filePath);
+    } catch {
+      await fs.writeFile(
+        filePath,
+        `${JSON.stringify(CHANNEL_DEFAULTS, null, 2)}\n`,
+        'utf8',
+      );
+    }
+    return filePath;
+  }
+
+  private toPayloadRecord(source: unknown) {
+    if (!source || typeof source !== 'object' || Array.isArray(source)) {
+      return undefined;
+    }
+    return Object.fromEntries(
+      Object.entries(source).flatMap(([key, value]) => {
+        if (value == null) {
+          return [];
+        }
+        if (['string', 'number', 'boolean'].includes(typeof value)) {
+          return [[key, String(value)]];
+        }
+        return [];
+      }),
+    );
+  }
+
+  private sanitizeRechargeChannelConfig(
+    channel: RechargeChannel,
+    source: unknown,
+  ): RechargeChannelRuntimeConfig {
+    const defaults = CHANNEL_DEFAULTS[channel];
+    if (!source || typeof source !== 'object' || Array.isArray(source)) {
+      return {
+        ...defaults,
+        h5Payload: defaults.h5Payload ? { ...defaults.h5Payload } : undefined,
+        androidPayload: defaults.androidPayload
+          ? { ...defaults.androidPayload }
+          : undefined,
+      };
+    }
+
+    const raw = source as RawJson;
+    const createMode =
+      raw.createMode === 'android_order' || raw.createMode === 'h5_transaction'
+        ? raw.createMode
+        : defaults.createMode;
+    const appId =
+      typeof raw.appId === 'string' && raw.appId.trim()
+        ? raw.appId.trim()
+        : defaults.appId;
+    const payChannel =
+      raw.payChannel === 'alipay' || raw.payChannel === 'lenovo'
+        ? raw.payChannel
+        : defaults.payChannel;
+    const h5Payload = {
+      ...(defaults.h5Payload ?? {}),
+      ...(this.toPayloadRecord(raw.h5Payload) ?? {}),
+    };
+    const androidPayload = {
+      ...(defaults.androidPayload ?? {}),
+      ...(this.toPayloadRecord(raw.androidPayload) ?? {}),
+    };
+
+    return {
+      createMode,
+      appId,
+      payChannel,
+      h5Payload: Object.keys(h5Payload).length > 0 ? h5Payload : undefined,
+      androidPayload:
+        Object.keys(androidPayload).length > 0 ? androidPayload : undefined,
+    };
+  }
+
+  private async loadRechargeChannelConfigMap(): Promise<RechargeChannelConfigMap> {
+    const filePath = await this.ensureRechargeChannelConfigFile();
+    let parsed: unknown = {};
+
+    try {
+      parsed = JSON.parse(await fs.readFile(filePath, 'utf8')) as RawJson;
+    } catch {
+      parsed = {};
+    }
+
+    const source =
+      parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+        ? (parsed as RawJson)
+        : {};
+
+    return {
+      联想: this.sanitizeRechargeChannelConfig('联想', source['联想']),
+      网页: this.sanitizeRechargeChannelConfig('网页', source['网页']),
+      Android: this.sanitizeRechargeChannelConfig('Android', source['Android']),
+    };
+  }
+
+  private async getRechargeChannelConfig(channel: RechargeChannel) {
+    const configMap = await this.loadRechargeChannelConfigMap();
+    return configMap[channel];
   }
 
   private toStringRecord(source: Record<string, PayloadValue> = {}) {
@@ -848,7 +966,7 @@ export class ExternalIntegrationService {
     input: RechargeFlowInput,
     accessToken: string,
   ) {
-    const config = this.getRechargeChannelConfig(input.channel);
+    const config = await this.getRechargeChannelConfig(input.channel);
     const h5TransactionUrl =
       process.env.EXTERNAL_RECHARGE_H5_TRANSACTION_URL?.trim() ||
       'https://api-h5-sub.meitu.com/h5/transaction/v2/create.json';
@@ -893,7 +1011,7 @@ export class ExternalIntegrationService {
     input: RechargeFlowInput,
     accessToken: string,
   ) {
-    const config = this.getRechargeChannelConfig('Android');
+    const config = await this.getRechargeChannelConfig('Android');
     const orderCreateUrl =
       process.env.EXTERNAL_RECHARGE_ORDER_CREATE_URL?.trim() ||
       'https://api.xiuxiu.meitu.com/v1/vip/subscription/order/create.json';
@@ -958,7 +1076,7 @@ export class ExternalIntegrationService {
     input: RechargeFlowInput,
     content: string,
   ) {
-    const config = this.getRechargeChannelConfig(input.channel);
+    const config = await this.getRechargeChannelConfig(input.channel);
     const cashierAgreementUrl =
       process.env.EXTERNAL_RECHARGE_CASHIER_URL?.trim() ||
       'https://api.wallet.meitu.com/payment/cashier/agreement.json';

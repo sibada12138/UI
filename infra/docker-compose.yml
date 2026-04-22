@@ -22,6 +22,7 @@ services:
       EXTERNAL_DEFAULT_DEVICE_ID: "${EXTERNAL_DEFAULT_DEVICE_ID:-web-default-device}"
       RECHARGE_CHANNELS_FILE: "${RECHARGE_CHANNELS_FILE:-./data/recharge-channels.txt}"
       RECHARGE_PRICE_FILE: "${RECHARGE_PRICE_FILE:-./data/recharge-price.txt}"
+      EXTERNAL_RECHARGE_CHANNEL_CONFIG_FILE: "${EXTERNAL_RECHARGE_CHANNEL_CONFIG_FILE:-./data/recharge-channel-config.json}"
       EXTERNAL_RECHARGE_H5_TRANSACTION_URL: "${EXTERNAL_RECHARGE_H5_TRANSACTION_URL:-https://api-h5-sub.meitu.com/h5/transaction/v2/create.json}"
       EXTERNAL_RECHARGE_ORDER_CREATE_URL: "${EXTERNAL_RECHARGE_ORDER_CREATE_URL:-https://api.xiuxiu.meitu.com/v1/vip/subscription/order/create.json}"
       EXTERNAL_RECHARGE_CASHIER_URL: "${EXTERNAL_RECHARGE_CASHIER_URL:-https://api.wallet.meitu.com/payment/cashier/agreement.json}"
