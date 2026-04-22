@@ -6,6 +6,8 @@ ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 COMPOSE_FILE="${ROOT_DIR}/infra/docker-compose.yml"
 ENV_FILE="${ROOT_DIR}/infra/.env"
 ENV_EXAMPLE_FILE="${ROOT_DIR}/infra/.env.example"
+LEGACY_DB_BACKUP_FILE="${ROOT_DIR}/infra/.legacy-dev.db"
+API_CONTAINER_NAME="recharge_card_api"
 
 STAGE="auto"
 NO_PULL=0
@@ -75,6 +77,44 @@ log() {
 
 warn() {
   printf '[update][warn] %s\n' "$*" >&2
+}
+
+backup_legacy_db_from_container() {
+  if ! command -v docker >/dev/null 2>&1; then
+    return
+  fi
+  if ! docker ps -a --format '{{.Names}}' | grep -qx "$API_CONTAINER_NAME"; then
+    return
+  fi
+  if [ -f "$LEGACY_DB_BACKUP_FILE" ]; then
+    return
+  fi
+  if docker cp "${API_CONTAINER_NAME}:/app/apps/api/prisma/data/dev.db" "$LEGACY_DB_BACKUP_FILE" >/dev/null 2>&1; then
+    log "检测到旧路径数据库，已备份到 infra/.legacy-dev.db"
+  fi
+}
+
+restore_legacy_db_to_volume_if_needed() {
+  if ! command -v docker >/dev/null 2>&1; then
+    return
+  fi
+  if [ ! -f "$LEGACY_DB_BACKUP_FILE" ]; then
+    return
+  fi
+  if ! docker ps --format '{{.Names}}' | grep -qx "$API_CONTAINER_NAME"; then
+    return
+  fi
+  if docker exec "$API_CONTAINER_NAME" sh -lc 'test -f /app/apps/api/data/dev.db' >/dev/null 2>&1; then
+    rm -f "$LEGACY_DB_BACKUP_FILE"
+    return
+  fi
+  if docker cp "$LEGACY_DB_BACKUP_FILE" "${API_CONTAINER_NAME}:/app/apps/api/data/dev.db" >/dev/null 2>&1; then
+    log "已迁移数据库到持久化目录 /app/apps/api/data/dev.db"
+    compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" restart api >/dev/null 2>&1 || true
+    rm -f "$LEGACY_DB_BACKUP_FILE"
+    return
+  fi
+  warn "检测到旧数据库备份但自动迁移失败，请手动处理: $LEGACY_DB_BACKUP_FILE"
 }
 
 compose() {
@@ -173,8 +213,10 @@ build_service() {
 up_service() {
   local service="$1"
   if [ "$service" = "api" ]; then
+    backup_legacy_db_from_container
     log "启动 redis + api..."
     compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" up -d redis api
+    restore_legacy_db_to_volume_if_needed
     return
   fi
   log "启动 ${service}..."

@@ -8,7 +8,7 @@ services:
     environment:
       NODE_ENV: production
       PORT: "3001"
-      DATABASE_URL: "file:./data/dev.db"
+      DATABASE_URL: "file:../data/dev.db"
       REDIS_URL: "redis://redis:6379"
       APP_BASE_URL: "${APP_BASE_URL:-http://localhost:3090}"
       ADMIN_JWT_SECRET: "${ADMIN_JWT_SECRET:-replace-with-long-random-string}"

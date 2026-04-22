@@ -38,6 +38,8 @@ docker compose -f infra/docker-compose.yml --env-file infra/.env up -d web
 说明：
 - 按 `api -> web` 拆分，明显降低服务器瞬时负载。
 - `redis` 无改动时不需要重建。
+- SQLite 已固定到持久化目录 `/app/apps/api/data/dev.db`，容器重启不会丢 CDK。
+- 若你是从旧版本升级，`infra/update.sh` 会自动尝试把旧路径数据库迁移到新持久化目录。
 
 ### 一键更新脚本（推荐）
 仓库已提供脚本：`infra/update.sh`
