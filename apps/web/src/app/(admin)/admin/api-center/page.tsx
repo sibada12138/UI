@@ -217,7 +217,7 @@ export default function ApiCenterPage() {
                         () =>
                           adminApiRequest("/admin/external/sms/bootstrap", {
                             method: "POST",
-                            body: { deviceId, autoOcr: true },
+                            body: { deviceId },
                           }),
                         (raw) => {
                           const data = raw as {

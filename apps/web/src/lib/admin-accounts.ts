@@ -79,20 +79,9 @@ export async function fetchAdminAccounts() {
     if (!isAccountsRouteMissing(error)) {
       throw error;
     }
-    try {
-      const postData = await adminApiRequest<{ items: AdminAccountItem[] }>(
-        "/admin/recharge/tasks/accounts",
-        { method: "POST" },
-      );
-      return postData.items || [];
-    } catch (postError) {
-      if (!isAccountsRouteMissing(postError)) {
-        throw postError;
-      }
-      const fallback = await adminApiRequest<{ items: LegacyTaskItem[] }>(
-        "/admin/recharge/tasks",
-      );
-      return (fallback.items || []).map((item) => mapLegacyTaskToAccount(item));
-    }
+    const fallback = await adminApiRequest<{ items: LegacyTaskItem[] }>(
+      "/admin/recharge/tasks",
+    );
+    return (fallback.items || []).map((item) => mapLegacyTaskToAccount(item));
   }
 }
