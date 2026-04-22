@@ -248,10 +248,11 @@ export class RechargeService {
       throw new NotFoundException('RECHARGE_TASK_NOT_FOUND');
     }
 
-    const generated =
-      dto.useExternalApi === true
-        ? await this.generateExternalLink(dto, operatorId)
-        : await this.generateLocalLink(taskId);
+    if (dto.useExternalApi === false) {
+      throw new BadRequestException('EXTERNAL_ONLY_MODE');
+    }
+
+    const generated = await this.generateExternalLink(dto, operatorId);
 
     const updated = await this.prisma.rechargeTask.update({
       where: { id: taskId },

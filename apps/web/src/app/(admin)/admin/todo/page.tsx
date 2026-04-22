@@ -63,8 +63,6 @@ export default function TodoPage() {
   const [channels, setChannels] = useState<string[]>(["网页", "联想", "Android"]);
   const [selectedChannel, setSelectedChannel] = useState("网页");
   const [message, setMessage] = useState("");
-
-  const [useExternalApi, setUseExternalApi] = useState(false);
   const [externalModalOpen, setExternalModalOpen] = useState(false);
   const [externalAccessToken, setExternalAccessToken] = useState("");
   const [externalCookie, setExternalCookie] = useState("");
@@ -218,7 +216,7 @@ export default function TodoPage() {
       await adminApiRequest(`/admin/recharge/tasks/${taskId}/generate-link`, {
         method: "POST",
         body: {
-          useExternalApi,
+          useExternalApi: true,
           channel: selectedChannel,
           accessToken: externalAccessToken.trim(),
           cookie: externalCookie.trim(),
@@ -226,7 +224,7 @@ export default function TodoPage() {
       });
       pushToast({
         type: "success",
-        message: useExternalApi ? "外部充值链接生成成功。" : "本地充值链接生成成功。",
+        message: "美图充值链接生成成功。",
       });
       await load();
     } catch (error) {
@@ -278,26 +276,11 @@ export default function TodoPage() {
           <div>
             <h2 className="h-display text-2xl font-semibold">充值模式</h2>
             <p className="mt-1 text-sm text-[var(--text-muted)]">
-              渠道列表来自服务端配置文件。可在外部账号模式和本地模式之间切换。
+              渠道列表来自服务端配置文件。当前仅支持美图外部充值流程。
             </p>
           </div>
-          <div className="flex items-center gap-3 rounded-full border border-[var(--card-border)] bg-[var(--card-bg-soft)] px-3 py-2">
-            <span className="text-sm text-[var(--text-muted)]">外部充值</span>
-            <button
-              type="button"
-              className={`h-6 w-12 rounded-full border transition ${
-                useExternalApi
-                  ? "border-[var(--brand-green-accent)] bg-[var(--brand-green-accent)]"
-                  : "border-[var(--card-border)] bg-white"
-              }`}
-              onClick={() => setUseExternalApi((prev) => !prev)}
-            >
-              <span
-                className={`block h-5 w-5 rounded-full bg-white transition ${
-                  useExternalApi ? "translate-x-[22px]" : "translate-x-0"
-                }`}
-              />
-            </button>
+          <div className="rounded-full border border-[var(--card-border)] bg-[var(--card-bg-soft)] px-3 py-2 text-sm text-[var(--text-muted)]">
+            美图外部充值
           </div>
         </div>
 
@@ -320,8 +303,8 @@ export default function TodoPage() {
             </select>
           </div>
           <div className="rounded-xl border border-[var(--card-border)] bg-[var(--card-bg-soft)] px-4 py-3 text-sm text-[var(--text-muted)]">
-            <p>当前模式：{useExternalApi ? "外部账号充值（需要 Access-Token）" : "本地链接模式"}</p>
-            <p className="mt-1">外部模式下可在弹窗中检测全部渠道或单渠道可用性。</p>
+            <p>当前模式：外部账号充值（需要 Access-Token）</p>
+            <p className="mt-1">可在弹窗中检测全部渠道或单渠道可用性。</p>
           </div>
         </div>
       </article>

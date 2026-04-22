@@ -355,9 +355,6 @@ export class TokenService {
     }
 
     if (!sessionToSave) {
-      if (lastError instanceof Error) {
-        throw lastError;
-      }
       throw new BadRequestException('CAPTCHA_AUTO_RECOGNIZE_FAILED');
     }
 

@@ -1,27 +1,18 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import Image from "next/image";
 import { adminApiRequest } from "@/lib/admin-api";
-import { apiRequest } from "@/lib/api";
 import { toErrorMessage } from "@/lib/error-message";
 import { pushToast } from "@/lib/toast";
 
-type CaseState = {
+type TestResult = {
   status: "idle" | "running" | "ok" | "fail";
   detail: string;
   output: string;
 };
 
-type CaseItem = {
-  key: string;
-  name: string;
-  method: "GET" | "POST";
-  path: string;
-  run: () => Promise<unknown>;
-};
-
-function asJsonText(input: unknown) {
+function asJson(input: unknown) {
   try {
     return JSON.stringify(input, null, 2);
   } catch {
@@ -29,228 +20,69 @@ function asJsonText(input: unknown) {
   }
 }
 
-function initialCaseState(): CaseState {
+function initResult(): TestResult {
   return { status: "idle", detail: "未执行", output: "" };
 }
 
 export default function ApiCenterPage() {
-  const [token, setToken] = useState("tk_demo_token");
+  const [deviceId, setDeviceId] = useState("web-default-device");
+  const [unloginToken, setUnloginToken] = useState("");
   const [phone, setPhone] = useState("13800138000");
-  const [smsCode, setSmsCode] = useState("");
-  const [smsSessionId, setSmsSessionId] = useState("");
-  const [qrSessionId, setQrSessionId] = useState("");
-
-  const [queryType, setQueryType] = useState<"token" | "phone">("token");
-  const [queryValue, setQueryValue] = useState("tk_demo_token");
-  const [queryCaptchaId, setQueryCaptchaId] = useState("");
-  const [queryCaptchaCode, setQueryCaptchaCode] = useState("");
-  const [queryCaptchaSvg, setQueryCaptchaSvg] = useState("");
+  const [phoneCc, setPhoneCc] = useState("86");
+  const [captcha, setCaptcha] = useState("");
+  const [verifyCode, setVerifyCode] = useState("");
+  const [qrCode, setQrCode] = useState("");
+  const [accessToken, setAccessToken] = useState("");
+  const [cookie, setCookie] = useState("");
+  const [channel, setChannel] = useState("网页");
 
   const [smsCaptchaImage, setSmsCaptchaImage] = useState("");
-  const [qrImageData, setQrImageData] = useState("");
-  const [states, setStates] = useState<Record<string, CaseState>>({});
+  const [results, setResults] = useState<Record<string, TestResult>>({});
 
-  const cases = useMemo<CaseItem[]>(
-    () => [
-      {
-        key: "admin-dashboard",
-        name: "后台统计",
-        method: "GET",
-        path: "/admin/dashboard/metrics",
-        run: () => adminApiRequest("/admin/dashboard/metrics"),
-      },
-      {
-        key: "admin-recharge-tasks",
-        name: "待办任务列表",
-        method: "GET",
-        path: "/admin/recharge/tasks",
-        run: () => adminApiRequest("/admin/recharge/tasks"),
-      },
-      {
-        key: "public-token-status",
-        name: "CDK 状态查询",
-        method: "GET",
-        path: "/public/token/:token/status",
-        run: () => apiRequest(`/public/token/${encodeURIComponent(token.trim())}/status`),
-      },
-      {
-        key: "public-sms-bootstrap",
-        name: "短信初始化（图形码）",
-        method: "POST",
-        path: "/public/token/sms/bootstrap",
-        run: async () => {
-          const data = await apiRequest<{
-            captchaImageDataUrl?: string;
-            smsSessionId?: string;
-          }>("/public/token/sms/bootstrap", {
-            method: "POST",
-            body: { token: token.trim() },
-          });
-          if (data.captchaImageDataUrl) {
-            setSmsCaptchaImage(data.captchaImageDataUrl);
-          }
-          if (data.smsSessionId) {
-            setSmsSessionId(data.smsSessionId);
-          }
-          return data;
-        },
-      },
-      {
-        key: "public-send-sms",
-        name: "发送短信验证码",
-        method: "POST",
-        path: "/public/token/send-sms",
-        run: () =>
-          apiRequest("/public/token/send-sms", {
-            method: "POST",
-            body: {
-              token: token.trim(),
-              phone: phone.trim(),
-            },
-          }),
-      },
-      {
-        key: "public-qr-create",
-        name: "扫码初始化（生成二维码）",
-        method: "POST",
-        path: "/public/token/qr/create",
-        run: async () => {
-          const data = await apiRequest<{
-            qrSessionId: string;
-            qrImageDataUrl: string;
-          }>("/public/token/qr/create", {
-            method: "POST",
-            body: { token: token.trim() },
-          });
-          setQrSessionId(data.qrSessionId);
-          setQrImageData(data.qrImageDataUrl);
-          return data;
-        },
-      },
-      {
-        key: "public-qr-status",
-        name: "扫码状态查询",
-        method: "GET",
-        path: "/public/token/qr/:sessionId/status",
-        run: () =>
-          apiRequest(`/public/token/qr/${encodeURIComponent(qrSessionId.trim())}/status`),
-      },
-      {
-        key: "public-qr-login",
-        name: "扫码登录确认",
-        method: "POST",
-        path: "/public/token/qr/login",
-        run: () =>
-          apiRequest("/public/token/qr/login", {
-            method: "POST",
-            body: {
-              token: token.trim(),
-              qrSessionId: qrSessionId.trim(),
-            },
-          }),
-      },
-      {
-        key: "public-submit-sms",
-        name: "提交登录（短信模式）",
-        method: "POST",
-        path: "/public/token/submit",
-        run: () =>
-          apiRequest("/public/token/submit", {
-            method: "POST",
-            body: {
-              token: token.trim(),
-              phone: phone.trim(),
-              smsCode: smsCode.trim(),
-              loginMode: "sms",
-              smsSessionId: smsSessionId.trim(),
-            },
-          }),
-      },
-      {
-        key: "public-submit-qr",
-        name: "提交登录（扫码模式）",
-        method: "POST",
-        path: "/public/token/submit",
-        run: () =>
-          apiRequest("/public/token/submit", {
-            method: "POST",
-            body: {
-              token: token.trim(),
-              loginMode: "qr",
-              qrSessionId: qrSessionId.trim(),
-            },
-          }),
-      },
-      {
-        key: "public-query-captcha",
-        name: "查询验证码",
-        method: "POST",
-        path: "/public/captcha/create",
-        run: async () => {
-          const data = await apiRequest<{ captchaId: string; captchaSvg: string }>(
-            "/public/captcha/create",
-            { method: "POST" },
-          );
-          setQueryCaptchaId(data.captchaId);
-          setQueryCaptchaSvg(data.captchaSvg);
-          return data;
-        },
-      },
-      {
-        key: "public-query",
-        name: "开卡进度查询",
-        method: "POST",
-        path: "/public/query",
-        run: () =>
-          apiRequest("/public/query", {
-            method: "POST",
-            body: {
-              queryType,
-              queryValue: queryValue.trim(),
-              captchaId: queryCaptchaId.trim(),
-              captchaCode: queryCaptchaCode.trim(),
-            },
-          }),
-      },
-      {
-        key: "external-qr-create",
-        name: "外部扫码接口",
-        method: "POST",
-        path: "/admin/external/qr/create",
-        run: () =>
-          adminApiRequest("/admin/external/qr/create", {
-            method: "POST",
-            body: { deviceId: "api-center-check" },
-          }),
-      },
-    ],
-    [phone, qrSessionId, queryCaptchaCode, queryCaptchaId, queryType, queryValue, smsCode, smsSessionId, token],
-  );
-
-  async function runCase(item: CaseItem) {
-    setStates((prev) => ({
+  function setRunning(key: string) {
+    setResults((prev) => ({
       ...prev,
-      [item.key]: { status: "running", detail: "执行中...", output: prev[item.key]?.output ?? "" },
+      [key]: { ...(prev[key] ?? initResult()), status: "running", detail: "执行中..." },
     }));
-    try {
-      const data = await item.run();
-      setStates((prev) => ({
-        ...prev,
-        [item.key]: { status: "ok", detail: "功能正常", output: asJsonText(data) },
-      }));
-      pushToast({ type: "success", message: `${item.name}：通过` });
-    } catch (error) {
-      const msg = toErrorMessage(error, "请求失败");
-      setStates((prev) => ({
-        ...prev,
-        [item.key]: { status: "fail", detail: msg, output: msg },
-      }));
-      pushToast({ type: "error", message: `${item.name}：${msg}` });
-    }
   }
 
-  function stateOf(key: string) {
-    return states[key] ?? initialCaseState();
+  function setOk(key: string, detail: string, output: string) {
+    setResults((prev) => ({
+      ...prev,
+      [key]: { status: "ok", detail, output },
+    }));
+  }
+
+  function setFail(key: string, detail: string) {
+    setResults((prev) => ({
+      ...prev,
+      [key]: { status: "fail", detail, output: detail },
+    }));
+  }
+
+  function statusOf(key: string) {
+    return results[key] ?? initResult();
+  }
+
+  async function runCase(
+    key: string,
+    name: string,
+    run: () => Promise<unknown>,
+    onSuccess?: (data: unknown) => void,
+  ) {
+    setRunning(key);
+    try {
+      const data = await run();
+      if (onSuccess) {
+        onSuccess(data);
+      }
+      setOk(key, "接口调用成功", asJson(data));
+      pushToast({ type: "success", message: `${name}：成功` });
+    } catch (error) {
+      const text = toErrorMessage(error, "请求失败");
+      setFail(key, text);
+      pushToast({ type: "error", message: `${name}：${text}` });
+    }
   }
 
   return (
@@ -258,136 +90,358 @@ export default function ApiCenterPage() {
       <article className="apple-panel p-6">
         <h1 className="h-display section-title">API 中心</h1>
         <p className="mt-2 text-sm text-[var(--text-muted)]">
-          用于测试接口功能是否可用。逐项点击执行，直接查看返回内容或错误原因。
+          这里只测试美图外部接口链路（/api 目录对应的短信、扫码、VIP、充值能力），不测试站内页面接口。
         </p>
       </article>
 
       <article className="apple-panel p-6">
         <h2 className="h-display text-2xl font-semibold">测试参数</h2>
         <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-          <input className="field font-mono" value={token} onChange={(e) => setToken(e.target.value)} placeholder="CDK" />
-          <input className="field" value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="手机号" />
-          <input className="field" value={smsSessionId} onChange={(e) => setSmsSessionId(e.target.value)} placeholder="smsSessionId" />
-          <input className="field" value={smsCode} onChange={(e) => setSmsCode(e.target.value)} placeholder="短信验证码" />
-          <input className="field" value={qrSessionId} onChange={(e) => setQrSessionId(e.target.value)} placeholder="qrSessionId" />
-          <select className="field" value={queryType} onChange={(e) => setQueryType(e.target.value as "token" | "phone")}>
-            <option value="token">按 CDK 查询</option>
-            <option value="phone">按手机号查询</option>
+          <input className="field" placeholder="deviceId" value={deviceId} onChange={(e) => setDeviceId(e.target.value)} />
+          <input className="field" placeholder="unloginToken" value={unloginToken} onChange={(e) => setUnloginToken(e.target.value)} />
+          <input className="field" placeholder="手机号" value={phone} onChange={(e) => setPhone(e.target.value)} />
+          <input className="field" placeholder="phoneCc" value={phoneCc} onChange={(e) => setPhoneCc(e.target.value)} />
+          <input className="field" placeholder="图形验证码（手填）" value={captcha} onChange={(e) => setCaptcha(e.target.value)} />
+          <input className="field" placeholder="短信验证码" value={verifyCode} onChange={(e) => setVerifyCode(e.target.value)} />
+          <input className="field" placeholder="qrCode" value={qrCode} onChange={(e) => setQrCode(e.target.value)} />
+          <select className="field" value={channel} onChange={(e) => setChannel(e.target.value)}>
+            <option value="网页">网页</option>
+            <option value="联想">联想</option>
+            <option value="Android">Android</option>
           </select>
-          <input className="field" value={queryValue} onChange={(e) => setQueryValue(e.target.value)} placeholder="查询值" />
-          <input className="field" value={queryCaptchaId} onChange={(e) => setQueryCaptchaId(e.target.value)} placeholder="queryCaptchaId" />
-          <input className="field" value={queryCaptchaCode} onChange={(e) => setQueryCaptchaCode(e.target.value)} placeholder="查询验证码" />
+          <input className="field md:col-span-2 xl:col-span-2" placeholder="Access-Token" value={accessToken} onChange={(e) => setAccessToken(e.target.value)} />
+          <input className="field md:col-span-2 xl:col-span-2" placeholder="Cookie（可选）" value={cookie} onChange={(e) => setCookie(e.target.value)} />
         </div>
 
-        <div className="mt-4 grid gap-3 md:grid-cols-2">
-          <div className="rounded-[12px] border border-[var(--card-border)] bg-[var(--card-bg-soft)] p-3">
-            <p className="text-xs text-[var(--text-muted)]">短信图形验证码</p>
-            {smsCaptchaImage ? (
-              <Image
-                src={smsCaptchaImage}
-                alt="sms captcha"
-                width={320}
-                height={64}
-                unoptimized
-                className="mt-2 h-16 w-full object-contain"
-              />
-            ) : (
-              <p className="mt-2 text-sm text-[var(--text-subtle)]">未生成</p>
-            )}
-          </div>
-          <div className="rounded-[12px] border border-[var(--card-border)] bg-[var(--card-bg-soft)] p-3">
-            <p className="text-xs text-[var(--text-muted)]">扫码二维码</p>
-            {qrImageData ? (
-              <Image
-                src={qrImageData}
-                alt="qr code"
-                width={320}
-                height={112}
-                unoptimized
-                className="mt-2 h-28 w-full object-contain"
-              />
-            ) : (
-              <p className="mt-2 text-sm text-[var(--text-subtle)]">未生成</p>
-            )}
-          </div>
+        <div className="mt-4 rounded-[12px] border border-[var(--card-border)] bg-[var(--card-bg-soft)] p-3">
+          <p className="text-xs text-[var(--text-muted)]">短信图形验证码预览（sms/bootstrap 返回）</p>
+          {smsCaptchaImage ? (
+            <Image
+              src={smsCaptchaImage}
+              alt="短信图形验证码"
+              width={400}
+              height={96}
+              unoptimized
+              className="mt-2 h-20 w-full object-contain"
+            />
+          ) : (
+            <p className="mt-2 text-sm text-[var(--text-subtle)]">未加载</p>
+          )}
         </div>
       </article>
 
       <article className="apple-panel p-4">
+        <h2 className="mb-3 text-xl font-semibold">短信链路</h2>
         <div className="table-shell">
           <table className="table-basic">
             <thead>
               <tr>
-                <th>接口名称</th>
-                <th>请求</th>
+                <th>接口</th>
+                <th>路径</th>
                 <th>状态</th>
                 <th>结果</th>
                 <th>操作</th>
               </tr>
             </thead>
             <tbody>
-              {cases.map((item) => {
-                const state = stateOf(item.key);
-                return (
-                  <tr key={item.key}>
-                    <td>{item.name}</td>
-                    <td className="font-mono text-xs">{item.method} {item.path}</td>
-                    <td>
-                      <span className="status-pill">
-                        {state.status === "idle" && "未执行"}
-                        {state.status === "running" && "执行中"}
-                        {state.status === "ok" && "通过"}
-                        {state.status === "fail" && "失败"}
-                      </span>
-                    </td>
-                    <td>{state.detail}</td>
-                    <td>
-                      <div className="table-actions">
-                        <button
-                          className="btn-pill"
-                          type="button"
-                          onClick={() => void runCase(item)}
-                          disabled={state.status === "running"}
-                        >
-                          执行
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
+              <tr>
+                <td>获取 UnloginToken + 图形验证码</td>
+                <td className="font-mono text-xs">POST /admin/external/sms/bootstrap</td>
+                <td>{statusOf("sms_bootstrap").detail}</td>
+                <td>{statusOf("sms_bootstrap").status}</td>
+                <td>
+                  <button
+                    className="btn-pill"
+                    type="button"
+                    onClick={() =>
+                      void runCase(
+                        "sms_bootstrap",
+                        "短信初始化",
+                        () => adminApiRequest("/admin/external/sms/bootstrap", { method: "POST", body: { deviceId } }),
+                        (raw) => {
+                          const data = raw as {
+                            unloginToken?: string;
+                            captchaMimeType?: string;
+                            captchaBase64?: string;
+                            phoneCc?: number;
+                            deviceId?: string;
+                          };
+                          if (data.unloginToken) setUnloginToken(data.unloginToken);
+                          if (data.phoneCc) setPhoneCc(String(data.phoneCc));
+                          if (data.deviceId) setDeviceId(String(data.deviceId));
+                          if (data.captchaMimeType && data.captchaBase64) {
+                            setSmsCaptchaImage(`data:${data.captchaMimeType};base64,${data.captchaBase64}`);
+                          }
+                        },
+                      )
+                    }
+                  >
+                    执行
+                  </button>
+                </td>
+              </tr>
+              <tr>
+                <td>发送短信验证码</td>
+                <td className="font-mono text-xs">POST /admin/external/sms/send-code</td>
+                <td>{statusOf("sms_send").detail}</td>
+                <td>{statusOf("sms_send").status}</td>
+                <td>
+                  <button
+                    className="btn-pill"
+                    type="button"
+                    onClick={() =>
+                      void runCase("sms_send", "发送短信", () =>
+                        adminApiRequest("/admin/external/sms/send-code", {
+                          method: "POST",
+                          body: { unloginToken, phone, phoneCc, captcha, deviceId },
+                        }),
+                      )
+                    }
+                  >
+                    执行
+                  </button>
+                </td>
+              </tr>
+              <tr>
+                <td>短信验证码登录</td>
+                <td className="font-mono text-xs">POST /admin/external/sms/login</td>
+                <td>{statusOf("sms_login").detail}</td>
+                <td>{statusOf("sms_login").status}</td>
+                <td>
+                  <button
+                    className="btn-pill"
+                    type="button"
+                    onClick={() =>
+                      void runCase(
+                        "sms_login",
+                        "短信登录",
+                        () =>
+                          adminApiRequest("/admin/external/sms/login", {
+                            method: "POST",
+                            body: { unloginToken, phone, phoneCc, verifyCode, deviceId },
+                          }),
+                        (raw) => {
+                          const data = raw as { accessToken?: string };
+                          if (data.accessToken) {
+                            setAccessToken(String(data.accessToken));
+                          }
+                        },
+                      )
+                    }
+                  >
+                    执行
+                  </button>
+                </td>
+              </tr>
             </tbody>
           </table>
         </div>
       </article>
 
       <article className="apple-panel p-4">
-        <h2 className="h-display text-xl font-semibold">返回内容</h2>
-        <div className="mt-3 grid gap-3">
-          {cases.map((item) => {
-            const state = stateOf(item.key);
-            return (
-              <details key={`output-${item.key}`} className="rounded-[12px] border border-[var(--card-border)] bg-[var(--card-bg-soft)] p-3">
-                <summary className="cursor-pointer text-sm font-medium">
-                  {item.name} - {state.status === "ok" ? "通过" : state.status === "fail" ? "失败" : "未执行"}
-                </summary>
-                <pre className="mt-2 overflow-auto rounded-[8px] border border-[var(--card-border)] bg-white p-3 text-xs leading-5">
-{state.output || "暂无返回内容"}
-                </pre>
-              </details>
-            );
-          })}
+        <h2 className="mb-3 text-xl font-semibold">扫码链路</h2>
+        <div className="table-shell">
+          <table className="table-basic">
+            <thead>
+              <tr>
+                <th>接口</th>
+                <th>路径</th>
+                <th>状态</th>
+                <th>结果</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>创建扫码二维码</td>
+                <td className="font-mono text-xs">POST /admin/external/qr/create</td>
+                <td>{statusOf("qr_create").detail}</td>
+                <td>{statusOf("qr_create").status}</td>
+                <td>
+                  <button
+                    className="btn-pill"
+                    type="button"
+                    onClick={() =>
+                      void runCase(
+                        "qr_create",
+                        "扫码创建",
+                        () =>
+                          adminApiRequest("/admin/external/qr/create", {
+                            method: "POST",
+                            body: { unloginToken, deviceId },
+                          }),
+                        (raw) => {
+                          const data = raw as { qrCode?: string; unloginToken?: string; deviceId?: string };
+                          if (data.qrCode) setQrCode(String(data.qrCode));
+                          if (data.unloginToken) setUnloginToken(String(data.unloginToken));
+                          if (data.deviceId) setDeviceId(String(data.deviceId));
+                        },
+                      )
+                    }
+                  >
+                    执行
+                  </button>
+                </td>
+              </tr>
+              <tr>
+                <td>查询扫码状态</td>
+                <td className="font-mono text-xs">GET /admin/external/qr/status</td>
+                <td>{statusOf("qr_status").detail}</td>
+                <td>{statusOf("qr_status").status}</td>
+                <td>
+                  <button
+                    className="btn-pill"
+                    type="button"
+                    onClick={() =>
+                      void runCase(
+                        "qr_status",
+                        "扫码状态",
+                        () =>
+                          adminApiRequest(
+                            `/admin/external/qr/status?qrCode=${encodeURIComponent(qrCode)}&unloginToken=${encodeURIComponent(unloginToken)}&deviceId=${encodeURIComponent(deviceId)}`,
+                          ),
+                      )
+                    }
+                  >
+                    执行
+                  </button>
+                </td>
+              </tr>
+              <tr>
+                <td>扫码执行登录</td>
+                <td className="font-mono text-xs">POST /admin/external/qr/login</td>
+                <td>{statusOf("qr_login").detail}</td>
+                <td>{statusOf("qr_login").status}</td>
+                <td>
+                  <button
+                    className="btn-pill"
+                    type="button"
+                    onClick={() =>
+                      void runCase(
+                        "qr_login",
+                        "扫码登录",
+                        () =>
+                          adminApiRequest("/admin/external/qr/login", {
+                            method: "POST",
+                            body: { qrCode, unloginToken, deviceId },
+                          }),
+                        (raw) => {
+                          const data = raw as { accessToken?: string };
+                          if (data.accessToken) setAccessToken(String(data.accessToken));
+                        },
+                      )
+                    }
+                  >
+                    执行
+                  </button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
         </div>
       </article>
 
       <article className="apple-panel p-4">
-        <h2 className="h-display text-xl font-semibold">查询验证码预览</h2>
-        <div className="mt-3 rounded-[12px] border border-[var(--card-border)] bg-[var(--card-bg-soft)] p-3">
-          {queryCaptchaSvg ? (
-            <div dangerouslySetInnerHTML={{ __html: queryCaptchaSvg }} />
-          ) : (
-            <p className="text-sm text-[var(--text-subtle)]">先执行“查询验证码”接口。</p>
-          )}
+        <h2 className="mb-3 text-xl font-semibold">VIP / 充值能力链路</h2>
+        <div className="table-shell">
+          <table className="table-basic">
+            <thead>
+              <tr>
+                <th>接口</th>
+                <th>路径</th>
+                <th>状态</th>
+                <th>结果</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>获取 VIP 总览</td>
+                <td className="font-mono text-xs">POST /admin/external/vip/overview</td>
+                <td>{statusOf("vip_overview").detail}</td>
+                <td>{statusOf("vip_overview").status}</td>
+                <td>
+                  <button
+                    className="btn-pill"
+                    type="button"
+                    onClick={() =>
+                      void runCase("vip_overview", "VIP总览", () =>
+                        adminApiRequest("/admin/external/vip/overview", {
+                          method: "POST",
+                          body: { accessToken, cookie },
+                        }),
+                      )
+                    }
+                  >
+                    执行
+                  </button>
+                </td>
+              </tr>
+              <tr>
+                <td>检查充值能力（单渠道）</td>
+                <td className="font-mono text-xs">POST /admin/recharge/tasks/capability/check</td>
+                <td>{statusOf("capability_single").detail}</td>
+                <td>{statusOf("capability_single").status}</td>
+                <td>
+                  <button
+                    className="btn-pill"
+                    type="button"
+                    onClick={() =>
+                      void runCase("capability_single", "单渠道能力检查", () =>
+                        adminApiRequest("/admin/recharge/tasks/capability/check", {
+                          method: "POST",
+                          body: { accessToken, cookie, checkAll: false, channel },
+                        }),
+                      )
+                    }
+                  >
+                    执行
+                  </button>
+                </td>
+              </tr>
+              <tr>
+                <td>检查充值能力（全部渠道）</td>
+                <td className="font-mono text-xs">POST /admin/recharge/tasks/capability/check</td>
+                <td>{statusOf("capability_all").detail}</td>
+                <td>{statusOf("capability_all").status}</td>
+                <td>
+                  <button
+                    className="btn-pill"
+                    type="button"
+                    onClick={() =>
+                      void runCase("capability_all", "全部渠道能力检查", () =>
+                        adminApiRequest("/admin/recharge/tasks/capability/check", {
+                          method: "POST",
+                          body: { accessToken, cookie, checkAll: true },
+                        }),
+                      )
+                    }
+                  >
+                    执行
+                  </button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </article>
+
+      <article className="apple-panel p-4">
+        <h2 className="h-display text-xl font-semibold">调试输出</h2>
+        <div className="mt-3 grid gap-3">
+          {Object.entries(results).map(([key, result]) => (
+            <details key={key} className="rounded-[12px] border border-[var(--card-border)] bg-[var(--card-bg-soft)] p-3">
+              <summary className="cursor-pointer text-sm font-medium">
+                {key} - {result.status}
+              </summary>
+              <pre className="mt-2 overflow-auto rounded-[8px] border border-[var(--card-border)] bg-white p-3 text-xs leading-5">
+{result.output || "暂无输出"}
+              </pre>
+            </details>
+          ))}
+          {Object.keys(results).length === 0 ? (
+            <p className="text-sm text-[var(--text-muted)]">执行任意接口后，这里会展示完整返回数据。</p>
+          ) : null}
         </div>
       </article>
     </section>
