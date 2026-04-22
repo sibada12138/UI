@@ -3,26 +3,9 @@
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { adminApiRequest } from "@/lib/admin-api";
+import { fetchAdminAccounts, type AdminAccountItem } from "@/lib/admin-accounts";
 import { toErrorMessage } from "@/lib/error-message";
 import { pushToast } from "@/lib/toast";
-
-type AccountItem = {
-  id: string;
-  taskId: string | null;
-  token: string;
-  phone: string;
-  phoneMasked: string;
-  smsCode: string;
-  accessToken: string;
-  cookie: string;
-  externalUid: string | null;
-  submittedAt: string;
-  updatedAt: string;
-  status: string;
-  hasUserVip: boolean;
-  hasWinkVip: boolean;
-  vipFetchedAt: string | null;
-};
 
 type AdminUser = {
   id: string;
@@ -66,7 +49,7 @@ function tokenPreview(value: string) {
 }
 
 export default function AccountsPage() {
-  const [accounts, setAccounts] = useState<AccountItem[]>([]);
+  const [accounts, setAccounts] = useState<AdminAccountItem[]>([]);
   const [admins, setAdmins] = useState<AdminUser[]>([]);
   const [message, setMessage] = useState("");
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -84,12 +67,12 @@ export default function AccountsPage() {
   async function load() {
     try {
       const [accountData, adminData] = await Promise.all([
-        adminApiRequest<{ items: AccountItem[] }>("/admin/recharge/tasks/accounts"),
+        fetchAdminAccounts(),
         adminApiRequest<{ items: AdminUser[] }>("/admin/admin-users"),
       ]);
-      setAccounts(accountData.items || []);
+      setAccounts(accountData || []);
       setAdmins(adminData.items || []);
-      setSelectedIds((prev) => prev.filter((id) => accountData.items.some((item) => item.id === id)));
+      setSelectedIds((prev) => prev.filter((id) => accountData.some((item) => item.id === id)));
     } catch (error) {
       const text = toErrorMessage(error, "加载账户数据失败");
       setMessage(text);

@@ -23,6 +23,11 @@ export class RechargeController {
     return this.rechargeService.listAccounts();
   }
 
+  @Post('accounts')
+  listAccountsPost() {
+    return this.rechargeService.listAccounts();
+  }
+
   @Post('accounts/delete')
   deleteAccounts(
     @Body() dto: DeleteAccountsDto,

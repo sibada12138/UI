@@ -651,10 +651,29 @@ export class ExternalIntegrationService {
       Referer: 'https://account.meitu.com/',
     });
 
+    const shouldAutoOcr = dto.autoOcr !== false;
+    let captchaAutoText = '';
+    let captchaAutoError = '';
+    if (shouldAutoOcr) {
+      try {
+        captchaAutoText = await this.captchaOcrService.recognizeCaptcha(
+          captcha.base64,
+        );
+      } catch (error) {
+        captchaAutoError =
+          error instanceof Error
+            ? error.message || 'CAPTCHA_AUTO_RECOGNIZE_FAILED'
+            : 'CAPTCHA_AUTO_RECOGNIZE_FAILED';
+      }
+    }
+
     await this.logAction(actorId, 'EXTERNAL_SMS_BOOTSTRAP', {
       deviceId,
       phoneCc,
       proxyEnabled: Boolean(getOutboundProxyConfig().enabled),
+      ocrTried: shouldAutoOcr,
+      ocrSuccess: Boolean(captchaAutoText),
+      ocrError: captchaAutoError || null,
     });
 
     return {
@@ -662,6 +681,8 @@ export class ExternalIntegrationService {
       phoneCc,
       captchaMimeType: captcha.contentType,
       captchaBase64: captcha.base64,
+      captchaAutoText: captchaAutoText || null,
+      captchaAutoError: captchaAutoError || null,
       deviceId,
     };
   }

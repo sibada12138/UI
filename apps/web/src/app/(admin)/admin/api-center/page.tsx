@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Image from "next/image";
 import { adminApiRequest } from "@/lib/admin-api";
+import { fetchAdminAccounts, type AdminAccountItem } from "@/lib/admin-accounts";
 import { toErrorMessage } from "@/lib/error-message";
 import { pushToast } from "@/lib/toast";
 
@@ -10,17 +11,6 @@ type TestResult = {
   status: "idle" | "running" | "ok" | "fail";
   detail: string;
   output: string;
-};
-
-type AccountItem = {
-  id: string;
-  token: string;
-  phone: string;
-  phoneMasked: string;
-  accessToken: string;
-  cookie: string;
-  status: string;
-  submittedAt: string;
 };
 
 function asJson(input: unknown) {
@@ -45,10 +35,12 @@ export default function ApiCenterPage() {
   const [accessToken, setAccessToken] = useState("");
   const [cookie, setCookie] = useState("");
   const [channel, setChannel] = useState("网页");
-  const [accounts, setAccounts] = useState<AccountItem[]>([]);
+  const [accounts, setAccounts] = useState<AdminAccountItem[]>([]);
   const [selectedAccountId, setSelectedAccountId] = useState("");
 
   const [smsCaptchaImage, setSmsCaptchaImage] = useState("");
+  const [smsCaptchaAutoText, setSmsCaptchaAutoText] = useState("");
+  const [smsCaptchaAutoError, setSmsCaptchaAutoError] = useState("");
   const [results, setResults] = useState<Record<string, TestResult>>({});
 
   function setRunning(key: string) {
@@ -78,10 +70,10 @@ export default function ApiCenterPage() {
 
   async function loadAccounts() {
     try {
-      const data = await adminApiRequest<{ items: AccountItem[] }>("/admin/recharge/tasks/accounts");
-      setAccounts(data.items || []);
-      if (!selectedAccountId && data.items?.[0]?.id) {
-        const first = data.items[0];
+      const items = await fetchAdminAccounts();
+      setAccounts(items);
+      if (!selectedAccountId && items?.[0]?.id) {
+        const first = items[0];
         setSelectedAccountId(first.id);
         setPhone(first.phone || "");
         setAccessToken(first.accessToken || "");
@@ -185,6 +177,10 @@ export default function ApiCenterPage() {
           ) : (
             <p className="mt-2 text-sm text-[var(--text-subtle)]">未加载</p>
           )}
+          <div className="mt-2 grid gap-1 text-xs text-[var(--text-muted)]">
+            <p>YOLO 识别结果：{smsCaptchaAutoText || "-"}</p>
+            <p>YOLO 识别状态：{smsCaptchaAutoError ? `失败(${smsCaptchaAutoError})` : smsCaptchaAutoText ? "成功" : "-"}</p>
+          </div>
         </div>
       </article>
 
@@ -218,12 +214,18 @@ export default function ApiCenterPage() {
                       void runCase(
                         "sms_bootstrap",
                         "短信初始化",
-                        () => adminApiRequest("/admin/external/sms/bootstrap", { method: "POST", body: { deviceId } }),
+                        () =>
+                          adminApiRequest("/admin/external/sms/bootstrap", {
+                            method: "POST",
+                            body: { deviceId, autoOcr: true },
+                          }),
                         (raw) => {
                           const data = raw as {
                             unloginToken?: string;
                             captchaMimeType?: string;
                             captchaBase64?: string;
+                            captchaAutoText?: string | null;
+                            captchaAutoError?: string | null;
                             phoneCc?: number;
                             deviceId?: string;
                           };
@@ -234,6 +236,8 @@ export default function ApiCenterPage() {
                             const imageData = `data:${data.captchaMimeType};base64,${data.captchaBase64}`;
                             setSmsCaptchaImage(imageData);
                           }
+                          setSmsCaptchaAutoText(String(data.captchaAutoText ?? ""));
+                          setSmsCaptchaAutoError(String(data.captchaAutoError ?? ""));
                         },
                       )
                     }
