@@ -93,6 +93,15 @@ body {
   outline-offset: 0;
 }
 
+.field.field-error {
+  border-color: color-mix(in srgb, var(--danger) 68%, #f1cdca);
+  background: color-mix(in srgb, var(--danger) 4%, #fff);
+}
+
+.field.field-error:focus-visible {
+  outline-color: var(--danger);
+}
+
 .status-pill {
   display: inline-flex;
   align-items: center;
@@ -130,31 +139,78 @@ body {
   transition: padding 0.2s ease;
 }
 
+.sidebar-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.sidebar-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 36px;
+  width: 36px;
+  border-radius: 50%;
+  border: 1px solid color-mix(in srgb, var(--gold) 38%, var(--card-border));
+  background: #fff;
+  color: color-mix(in srgb, var(--gold) 65%, #735c2d);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.sidebar-toggle svg {
+  width: 18px;
+  height: 18px;
+}
+
+.sidebar-toggle:hover {
+  background: color-mix(in srgb, var(--gold) 12%, #fff);
+  border-color: color-mix(in srgb, var(--gold) 58%, #cdbd94);
+}
+
+.admin-nav-icon {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
+}
+
 .admin-nav-item {
-  display: block;
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
   border-radius: 10px;
   padding: 10px 12px;
   color: var(--text-muted);
-  border: 1px solid var(--card-border);
-  background: #fff;
+  border: 1px solid transparent;
+  background: transparent;
   transition: all 0.2s ease;
   text-align: left;
 }
 
 .admin-nav-item:hover {
-  border-color: color-mix(in srgb, var(--brand-green-accent) 35%, #e7e7e7);
+  border-color: color-mix(in srgb, var(--gold) 26%, #e7e7e7);
   color: var(--page-text);
+  background: color-mix(in srgb, var(--gold) 6%, #fff);
 }
 
 .admin-nav-item.active {
-  border-color: color-mix(in srgb, var(--brand-green-accent) 38%, #dfe7e4);
-  background: color-mix(in srgb, var(--brand-green-accent) 9%, #ffffff);
-  color: var(--page-text);
+  border-color: color-mix(in srgb, var(--gold) 45%, #d8ccab);
+  background: color-mix(in srgb, var(--gold) 11%, #ffffff);
+  color: color-mix(in srgb, var(--gold) 80%, #6f562a);
   font-weight: 600;
 }
 
-.sidebar-compact-label {
-  display: none;
+.admin-nav-item.active::before {
+  content: "";
+  position: absolute;
+  left: 3px;
+  top: 9px;
+  bottom: 9px;
+  width: 3px;
+  border-radius: 999px;
+  background: var(--gold);
 }
 
 .sidebar-label {
@@ -166,17 +222,13 @@ body {
   display: none;
 }
 
-.admin-shell.sidebar-closed .sidebar-compact-label {
-  display: inline;
-}
-
 .admin-shell.sidebar-closed .admin-sidebar {
   padding-left: 10px;
   padding-right: 10px;
 }
 
 .admin-shell.sidebar-closed .admin-nav-item {
-  text-align: center;
+  justify-content: center;
   padding-left: 0;
   padding-right: 0;
 }
@@ -197,6 +249,88 @@ body {
   padding: 14px 22px;
   background: #fff;
   border-bottom: 1px solid var(--card-border);
+}
+
+.admin-profile-wrap {
+  position: relative;
+}
+
+.admin-profile-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 166px;
+  border-radius: 999px;
+  border: 1px solid var(--card-border);
+  background: #fff;
+  padding: 6px 10px 6px 8px;
+  color: var(--page-text);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.admin-profile-chip:hover {
+  border-color: color-mix(in srgb, var(--brand-green-accent) 26%, var(--card-border));
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.08);
+}
+
+.admin-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 30px;
+  width: 30px;
+  border-radius: 50%;
+  background: linear-gradient(145deg, #1f6d50 0%, #006241 100%);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.admin-profile-name {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.admin-profile-arrow {
+  margin-left: auto;
+  width: 16px;
+  height: 16px;
+  color: var(--text-muted);
+  transition: transform 0.2s ease;
+}
+
+.admin-profile-arrow.open {
+  transform: rotate(180deg);
+}
+
+.admin-profile-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 8px);
+  min-width: 150px;
+  border-radius: 12px;
+  border: 1px solid var(--card-border);
+  background: #fff;
+  box-shadow: 0 14px 28px rgba(0, 0, 0, 0.12);
+  overflow: hidden;
+  z-index: 20;
+}
+
+.admin-profile-menu-item {
+  width: 100%;
+  border: none;
+  background: transparent;
+  color: var(--page-text);
+  text-align: left;
+  padding: 11px 12px;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.admin-profile-menu-item:hover {
+  background: color-mix(in srgb, var(--gold) 10%, #fff);
+  color: color-mix(in srgb, var(--gold) 80%, #5c4822);
 }
 
 .table-shell {
@@ -236,6 +370,43 @@ body {
   font-weight: 700;
 }
 
+.metric-card {
+  border-radius: 12px;
+  border: 1px solid var(--card-border);
+  background: #fff;
+  box-shadow: var(--shadow-card);
+  padding: 16px 16px 14px;
+}
+
+.metric-card-line {
+  margin-top: 14px;
+  height: 3px;
+  border-radius: 999px;
+}
+
+.chart-row {
+  display: grid;
+  gap: 8px;
+}
+
+.chart-track {
+  width: 100%;
+  height: 12px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--brand-green-accent) 10%, #ece9df);
+  overflow: hidden;
+}
+
+.chart-fill {
+  height: 100%;
+  border-radius: inherit;
+}
+
+.todo-table-shell {
+  max-height: 560px;
+  overflow: auto;
+}
+
 @media (max-width: 980px) {
   .admin-shell {
     grid-template-columns: 1fr;
@@ -257,10 +428,6 @@ body {
     display: block !important;
   }
 
-  .sidebar-compact-label {
-    display: none !important;
-  }
-
   .admin-sidebar nav {
     display: flex;
     overflow-x: auto;
@@ -270,14 +437,52 @@ body {
 
   .admin-nav-item {
     white-space: nowrap;
+    justify-content: flex-start;
+    padding-left: 10px;
+    padding-right: 10px;
+  }
+
+  .admin-nav-item.active::before {
+    left: 0;
   }
 
   .admin-topbar {
     padding: 12px 14px;
   }
 
+  .admin-profile-chip {
+    min-width: 132px;
+  }
+
+  .admin-profile-name {
+    max-width: 64px;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+
   .table-basic th,
   .table-basic td {
     padding: 10px 10px;
+  }
+
+  .todo-table-shell {
+    max-height: 430px;
+  }
+}
+
+@media (max-width: 720px) {
+  .section-title {
+    font-size: 24px;
+  }
+
+  .admin-topbar {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+
+  .admin-profile-wrap {
+    margin-left: auto;
   }
 }

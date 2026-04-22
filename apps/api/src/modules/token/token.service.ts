@@ -642,6 +642,8 @@ export class TokenService {
         ? {
             status: latestTask.status,
             updatedAt: latestTask.updatedAt,
+            remark: latestTask.remark,
+            apiMessage: latestTask.apiMessage,
           }
         : null,
     };

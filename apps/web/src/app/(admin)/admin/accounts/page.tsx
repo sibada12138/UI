@@ -52,6 +52,8 @@ export default function AccountsPage() {
   const [accounts, setAccounts] = useState<AdminAccountItem[]>([]);
   const [admins, setAdmins] = useState<AdminUser[]>([]);
   const [message, setMessage] = useState("");
+  const [searchKeyword, setSearchKeyword] = useState("");
+  const [focusAccountId, setFocusAccountId] = useState("");
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [deleting, setDeleting] = useState(false);
 
@@ -63,6 +65,20 @@ export default function AccountsPage() {
     () => accounts.length > 0 && accounts.every((item) => selectedIds.includes(item.id)),
     [accounts, selectedIds],
   );
+
+  const filteredAccounts = useMemo(() => {
+    const keyword = searchKeyword.trim().toLowerCase();
+    if (!keyword) {
+      return accounts;
+    }
+    return accounts.filter((item) => {
+      return (
+        item.phoneMasked.toLowerCase().includes(keyword) ||
+        item.phone.toLowerCase().includes(keyword) ||
+        item.token.toLowerCase().includes(keyword)
+      );
+    });
+  }, [accounts, searchKeyword]);
 
   async function load() {
     try {
@@ -82,6 +98,27 @@ export default function AccountsPage() {
 
   useEffect(() => {
     void load();
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    const search = new URLSearchParams(window.location.search);
+    const q = search.get("q") ?? "";
+    const focus = search.get("focus") ?? "";
+    if (q) {
+      setSearchKeyword(q);
+    }
+    if (focus) {
+      setFocusAccountId(focus);
+      window.setTimeout(() => {
+        const target = document.getElementById(`account-row-${focus}`);
+        if (target) {
+          target.scrollIntoView({ behavior: "smooth", block: "center" });
+        }
+      }, 260);
+    }
   }, []);
 
   function toggleSelect(id: string) {
@@ -160,6 +197,12 @@ export default function AccountsPage() {
       <article className="apple-panel p-4">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
           <div className="flex flex-wrap items-center gap-2">
+            <input
+              className="field h-10 w-[260px]"
+              placeholder="搜索手机号或 CDK"
+              value={searchKeyword}
+              onChange={(e) => setSearchKeyword(e.target.value)}
+            />
             <button className="btn-pill" type="button" onClick={toggleSelectAll}>
               {allSelected ? "取消全选" : "全选"}
             </button>
@@ -195,8 +238,12 @@ export default function AccountsPage() {
               </tr>
             </thead>
             <tbody>
-              {accounts.map((item) => (
-                <tr key={item.id}>
+              {filteredAccounts.map((item) => (
+                <tr
+                  key={item.id}
+                  id={`account-row-${item.id}`}
+                  className={focusAccountId === item.id ? "bg-[color-mix(in_srgb,var(--gold)_10%,white)]" : ""}
+                >
                   <td>
                     <input
                       type="checkbox"
@@ -225,10 +272,10 @@ export default function AccountsPage() {
                   <td>{formatDate(item.updatedAt)}</td>
                 </tr>
               ))}
-              {accounts.length === 0 ? (
+              {filteredAccounts.length === 0 ? (
                 <tr>
                   <td colSpan={10} className="text-[var(--text-muted)]">
-                    暂无账户提交记录。
+                    暂无匹配记录。
                   </td>
                 </tr>
               ) : null}

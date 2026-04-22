@@ -3,7 +3,7 @@
 import { FormEvent, Suspense, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { apiRequest } from "@/lib/api";
-import { saveAdminToken } from "@/lib/admin-auth";
+import { saveAdminProfile, saveAdminToken } from "@/lib/admin-auth";
 import { toErrorMessage } from "@/lib/error-message";
 
 function AdminLoginPageContent() {
@@ -20,11 +20,15 @@ function AdminLoginPageContent() {
     setLoading(true);
     setMessage("");
     try {
-      const data = await apiRequest<{ accessToken: string }>("/admin/auth/login", {
+      const data = await apiRequest<{
+        accessToken: string;
+        user: { id: string; username: string; role: "admin" | "operator_admin" };
+      }>("/admin/auth/login", {
         method: "POST",
         body: { username, password },
       });
       saveAdminToken(data.accessToken);
+      saveAdminProfile(data.user);
       router.push("/admin/dashboard");
     } catch (error) {
       setMessage(toErrorMessage(error, "登录失败，请稍后重试"));

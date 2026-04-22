@@ -1,8 +1,12 @@
 export type ToastType = "info" | "success" | "error";
 
+export type ToastTypeEx = ToastType | "warning";
+
 export type ToastPayload = {
+  title?: string;
   message: string;
-  type?: ToastType;
+  type?: ToastTypeEx;
+  durationMs?: number;
 };
 
 export function pushToast(payload: ToastPayload) {
