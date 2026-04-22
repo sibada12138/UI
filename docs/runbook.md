@@ -83,6 +83,21 @@ k6 run apps/api/test/load/query-load.k6.js
 - `POST /api/admin/external/qr/login`
 - `POST /api/admin/external/vip/overview`
 
+## 9. Recharge Integration (Admin)
+- `GET /api/admin/recharge/channels`
+- `POST /api/admin/recharge/channels`
+- `POST /api/admin/recharge/tasks/:id/generate-link` (supports local/external mode)
+
+Example body (external mode):
+```json
+{
+  "useExternalApi": true,
+  "channel": "网页",
+  "accessToken": "your_access_token",
+  "cookie": "optional_cookie"
+}
+```
+
 Required env (API):
 - `OUTBOUND_PROXY_URL` (optional)
 - `EXTERNAL_SUGGEST_CLIENT_ID`
@@ -90,3 +105,7 @@ Required env (API):
 - `EXTERNAL_ZIP_VERSION`
 - `EXTERNAL_WEB_VERSION`
 - `EXTERNAL_DEFAULT_DEVICE_ID`
+- `RECHARGE_CHANNELS_FILE`
+- `EXTERNAL_RECHARGE_H5_TRANSACTION_URL`
+- `EXTERNAL_RECHARGE_ORDER_CREATE_URL`
+- `EXTERNAL_RECHARGE_CASHIER_URL`

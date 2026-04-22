@@ -1,6 +1,7 @@
 import { Body, Controller, Get, Param, Post } from '@nestjs/common';
 import { RechargeService } from './recharge.service';
 import { UpdateRechargeStatusDto } from './dto/update-recharge-status.dto';
+import { GenerateRechargeLinkDto } from './dto/generate-recharge-link.dto';
 import { CurrentAdmin } from '../../common/auth/current-admin.decorator';
 import type { CurrentAdminUser } from '../../common/auth/current-admin.decorator';
 
@@ -16,9 +17,10 @@ export class RechargeController {
   @Post(':id/generate-link')
   generateLink(
     @Param('id') id: string,
+    @Body() dto: GenerateRechargeLinkDto,
     @CurrentAdmin() admin?: CurrentAdminUser,
   ) {
-    return this.rechargeService.generateLink(id, admin?.id);
+    return this.rechargeService.generateLink(id, admin?.id, dto);
   }
 
   @Post(':id/status')

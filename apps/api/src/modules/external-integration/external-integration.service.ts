@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { ProxyAgent } from 'undici';
+import * as QRCode from 'qrcode';
 import { PrismaService } from '../prisma/prisma.service';
 import { getOutboundProxyConfig } from '../../common/http/proxy-config';
 import { normalizePhone } from '../../common/security/crypto.util';
@@ -17,6 +18,19 @@ import { QrLoginDto } from './dto/qr-login.dto';
 import { VipOverviewDto } from './dto/vip-overview.dto';
 
 type RawJson = Record<string, unknown>;
+type PayloadValue = string | number | boolean;
+
+export type RechargeChannel = '联想' | '网页' | 'Android';
+
+export type RechargeFlowInput = {
+  channel: RechargeChannel;
+  accessToken: string;
+  cookie?: string;
+  transactionPayload?: Record<string, PayloadValue>;
+  orderPayload?: Record<string, PayloadValue>;
+  cashierPayload?: Record<string, PayloadValue>;
+  actorId?: string;
+};
 
 @Injectable()
 export class ExternalIntegrationService {
@@ -157,6 +171,87 @@ export class ExternalIntegrationService {
     return typeof input === 'string' && input.trim()
       ? input.trim()
       : 'EXTERNAL_API_FAILED';
+  }
+
+  private toStringRecord(source: Record<string, PayloadValue> = {}) {
+    return Object.fromEntries(
+      Object.entries(source).map(([key, value]) => [key, String(value)]),
+    );
+  }
+
+  private findFirstStringValue(
+    source: unknown,
+    keyHintList: string[],
+  ): string | undefined {
+    if (!source || typeof source !== 'object') {
+      return undefined;
+    }
+    const normalizedHints = keyHintList.map((item) => item.toLowerCase());
+    const stack: unknown[] = [source];
+    while (stack.length > 0) {
+      const current = stack.pop();
+      if (!current || typeof current !== 'object') {
+        continue;
+      }
+      if (Array.isArray(current)) {
+        for (const item of current) {
+          stack.push(item);
+        }
+        continue;
+      }
+      for (const [key, value] of Object.entries(current)) {
+        const lowerKey = key.toLowerCase();
+        if (
+          normalizedHints.some((hint) => lowerKey.includes(hint)) &&
+          typeof value === 'string' &&
+          value.trim()
+        ) {
+          return value.trim();
+        }
+        if (value && typeof value === 'object') {
+          stack.push(value);
+        }
+      }
+    }
+    return undefined;
+  }
+
+  private findFirstNumberValue(source: unknown, keyHintList: string[]) {
+    if (!source || typeof source !== 'object') {
+      return undefined;
+    }
+    const normalizedHints = keyHintList.map((item) => item.toLowerCase());
+    const stack: unknown[] = [source];
+    while (stack.length > 0) {
+      const current = stack.pop();
+      if (!current || typeof current !== 'object') {
+        continue;
+      }
+      if (Array.isArray(current)) {
+        for (const item of current) {
+          stack.push(item);
+        }
+        continue;
+      }
+      for (const [key, value] of Object.entries(current)) {
+        const lowerKey = key.toLowerCase();
+        if (normalizedHints.some((hint) => lowerKey.includes(hint))) {
+          if (typeof value === 'number' && Number.isFinite(value)) {
+            return value;
+          }
+          if (typeof value === 'string') {
+            const parsed = Number(value);
+            if (Number.isFinite(parsed)) {
+              return parsed;
+            }
+          }
+        }
+        if (value && typeof value === 'object') {
+          stack.push(value);
+        }
+      }
+    }
+    return undefined;
   }
 
   private async logAction(
@@ -455,6 +550,133 @@ export class ExternalIntegrationService {
     return {
       userVip: userVip.data,
       winkVip: winkVip.data,
+    };
+  }
+
+  async createRechargeFlow(input: RechargeFlowInput) {
+    const accessToken = input.accessToken.trim();
+    if (!accessToken) {
+      throw new BadRequestException('EXTERNAL_ACCESS_TOKEN_REQUIRED');
+    }
+
+    const isMobileChannel = input.channel === 'Android';
+    const commonHeaders = {
+      'Access-Token': accessToken,
+      ...(input.cookie?.trim() ? { Cookie: input.cookie.trim() } : {}),
+    };
+
+    const vipData = await this.vipOverview(
+      { accessToken, cookie: input.cookie },
+      input.actorId,
+    );
+
+    const h5TransactionUrl =
+      process.env.EXTERNAL_RECHARGE_H5_TRANSACTION_URL?.trim() ||
+      'https://api-h5-sub.meitu.com/h5/transaction/v2/create.json';
+    const orderCreateUrl =
+      process.env.EXTERNAL_RECHARGE_ORDER_CREATE_URL?.trim() ||
+      'https://api.xiuxiu.meitu.com/v1/vip/subscription/order/create.json';
+    const cashierAgreementUrl =
+      process.env.EXTERNAL_RECHARGE_CASHIER_URL?.trim() ||
+      'https://api.wallet.meitu.com/payment/cashier/agreement.json';
+
+    let transactionResponse: RawJson | null = null;
+    if (!isMobileChannel) {
+      const transactionPayload = this.toStringRecord({
+        channel: input.channel,
+        ...(input.transactionPayload ?? {}),
+      });
+      const tx = await this.requestJson(h5TransactionUrl, {
+        method: 'POST',
+        headers: commonHeaders,
+        form: transactionPayload,
+      });
+      this.assertApiSuccess(tx.data);
+      transactionResponse = tx.data;
+    }
+
+    const orderPayload = this.toStringRecord({
+      channel: input.channel,
+      ...(input.orderPayload ?? {}),
+    });
+    const order = await this.requestJson(orderCreateUrl, {
+      method: 'POST',
+      headers: commonHeaders,
+      form: orderPayload,
+    });
+    this.assertApiSuccess(order.data);
+
+    const priceValue = this.findFirstNumberValue(order.data, [
+      'price',
+      'amount',
+      'pay_amount',
+      'total_fee',
+    ]);
+    if (typeof priceValue === 'number' && priceValue > 1.1) {
+      throw new BadRequestException('RECHARGE_PRICE_NOT_ALLOWED');
+    }
+
+    const orderNo =
+      this.findFirstStringValue(order.data, [
+        'order_no',
+        'orderid',
+        'order_id',
+        'trade_no',
+      ]) ?? '';
+
+    const cashierPayload = this.toStringRecord({
+      channel: input.channel,
+      ...(orderNo ? { order_no: orderNo } : {}),
+      ...(input.cashierPayload ?? {}),
+    });
+    const cashier = await this.requestJson(cashierAgreementUrl, {
+      method: 'POST',
+      headers: commonHeaders,
+      form: cashierPayload,
+    });
+    this.assertApiSuccess(cashier.data);
+
+    const paymentUrl =
+      this.findFirstStringValue(cashier.data, [
+        'qr',
+        'qrcode',
+        'pay_url',
+        'cashier_url',
+        'payment_url',
+      ]) ??
+      this.findFirstStringValue(order.data, [
+        'qr',
+        'qrcode',
+        'pay_url',
+        'cashier_url',
+        'payment_url',
+      ]);
+
+    if (!paymentUrl) {
+      throw new BadGatewayException('RECHARGE_PAYMENT_URL_NOT_FOUND');
+    }
+
+    const qrPayload = paymentUrl.startsWith('data:image/')
+      ? paymentUrl
+      : await QRCode.toDataURL(paymentUrl);
+
+    await this.logAction(input.actorId, 'EXTERNAL_RECHARGE_FLOW', {
+      channel: input.channel,
+      hasTransaction: Boolean(transactionResponse),
+      hasOrderNo: Boolean(orderNo),
+      priceValue: priceValue ?? null,
+    });
+
+    return {
+      channel: input.channel,
+      paymentUrl,
+      qrPayload,
+      orderNo,
+      priceValue: priceValue ?? null,
+      vip: vipData,
+      transaction: transactionResponse,
+      order: order.data,
+      cashier: cashier.data,
     };
   }
 }

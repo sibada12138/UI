@@ -20,6 +20,10 @@ services:
       EXTERNAL_ZIP_VERSION: "${EXTERNAL_ZIP_VERSION:-2.9.91}"
       EXTERNAL_WEB_VERSION: "${EXTERNAL_WEB_VERSION:-2.9.0}"
       EXTERNAL_DEFAULT_DEVICE_ID: "${EXTERNAL_DEFAULT_DEVICE_ID:-web-default-device}"
+      RECHARGE_CHANNELS_FILE: "${RECHARGE_CHANNELS_FILE:-./data/recharge-channels.txt}"
+      EXTERNAL_RECHARGE_H5_TRANSACTION_URL: "${EXTERNAL_RECHARGE_H5_TRANSACTION_URL:-https://api-h5-sub.meitu.com/h5/transaction/v2/create.json}"
+      EXTERNAL_RECHARGE_ORDER_CREATE_URL: "${EXTERNAL_RECHARGE_ORDER_CREATE_URL:-https://api.xiuxiu.meitu.com/v1/vip/subscription/order/create.json}"
+      EXTERNAL_RECHARGE_CASHIER_URL: "${EXTERNAL_RECHARGE_CASHIER_URL:-https://api.wallet.meitu.com/payment/cashier/agreement.json}"
     volumes:
       - api_data:/app/apps/api/data
     depends_on:

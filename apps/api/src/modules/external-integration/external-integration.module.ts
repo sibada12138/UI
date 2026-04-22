@@ -7,5 +7,6 @@ import { ExternalIntegrationService } from './external-integration.service';
   imports: [PrismaModule],
   controllers: [ExternalIntegrationController],
   providers: [ExternalIntegrationService],
+  exports: [ExternalIntegrationService],
 })
 export class ExternalIntegrationModule {}
