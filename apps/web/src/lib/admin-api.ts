@@ -1,5 +1,5 @@
 import { apiRequest, type ApiOptions } from "@/lib/api";
-import { clearAdminToken, getAdminToken } from "@/lib/admin-auth";
+import { clearAdminToken, getAdminToken, hasAdminSessionCookie } from "@/lib/admin-auth";
 
 type AdminApiOptions = Omit<ApiOptions, "token">;
 
@@ -52,15 +52,12 @@ export async function adminApiRequest<T>(path: string, options: AdminApiOptions 
     path,
     method: options.method ?? "GET",
     hasToken: Boolean(token),
+    hasSessionCookie: hasAdminSessionCookie(),
     token: maskToken(token),
   });
-  if (!token) {
-    redirectToLogin("missing_local_token");
-    throw new Error("SESSION_EXPIRED");
-  }
 
   try {
-    const result = await apiRequest<T>(path, { ...options, token });
+    const result = await apiRequest<T>(path, token ? { ...options, token } : { ...options });
     logAdminApiDebug("request success", { path });
     return result;
   } catch (error) {

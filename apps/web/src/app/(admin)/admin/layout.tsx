@@ -7,6 +7,7 @@ import {
   clearAdminToken,
   getAdminProfile,
   getAdminToken,
+  hasAdminSessionCookie,
   type AdminProfile,
 } from "@/lib/admin-auth";
 import { apiRequest } from "@/lib/api";
@@ -159,14 +160,16 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     setMounted(true);
     setAuthReady(false);
     const token = getAdminToken().trim();
-    setHasToken(Boolean(token));
+    const hasSession = Boolean(token) || hasAdminSessionCookie();
+    setHasToken(hasSession);
     const nextProfile = getAdminProfile();
     setProfile(nextProfile);
     setAuthReady(true);
     logLayoutDebug("init auth snapshot", {
       pathname,
       isLoginPage,
-      hasToken: Boolean(token),
+      hasToken: hasSession,
+      hasSessionCookie: hasAdminSessionCookie(),
       token: maskToken(token),
       profileUser: nextProfile?.username ?? "",
       profileRole: nextProfile?.role ?? "",
@@ -185,13 +188,15 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
       return;
     }
     const latestToken = getAdminToken().trim();
+    const hasSession = Boolean(latestToken) || hasAdminSessionCookie();
     logLayoutDebug("session check", {
       pathname,
       hasTokenState: hasToken,
+      hasSessionCookie: hasAdminSessionCookie(),
       latestToken: maskToken(latestToken),
     });
-    if (!latestToken) {
-      logLayoutDebug("session check failed -> redirect login", { reason: "no_token_after_mount" });
+    if (!hasSession) {
+      logLayoutDebug("session check failed -> redirect login", { reason: "no_token_and_no_cookie" });
       clearAdminToken();
       router.replace("/admin/login?reason=session");
       return;

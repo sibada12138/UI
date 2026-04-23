@@ -47,6 +47,10 @@ function getCookieValue(name: string) {
   return decodeURIComponent(hit.slice(name.length + 1));
 }
 
+export function hasAdminSessionCookie() {
+  return getCookieValue(COOKIE_KEY) === '1' || getCookieValue(TOKEN_COOKIE_KEY).trim().length > 0;
+}
+
 export function getAdminToken() {
   if (memoryToken.trim()) {
     const snapshot = `memory:${maskToken(memoryToken)}`;

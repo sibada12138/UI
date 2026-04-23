@@ -82,6 +82,7 @@ export async function apiRequest<T>(path: string, options: ApiOptions = {}) {
       headers,
       body: options.body ? JSON.stringify(options.body) : undefined,
       cache: 'no-store',
+      credentials: 'same-origin',
     });
   } catch (error) {
     logApiDebug('network error', {
