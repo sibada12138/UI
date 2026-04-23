@@ -8,15 +8,6 @@ const nextConfig: NextConfig = {
   typescript: {
     ignoreBuildErrors: process.env.SKIP_WEB_TYPECHECK === "1",
   },
-  async rewrites() {
-    const internalApiBase = process.env.API_INTERNAL_BASE ?? "http://api:3001/api";
-    return [
-      {
-        source: "/api/:path*",
-        destination: `${internalApiBase}/:path*`,
-      },
-    ];
-  },
 };
 
 export default nextConfig;
