@@ -1,15 +1,24 @@
+# syntax=docker/dockerfile:1.7
 FROM node:20-bookworm-slim
 
 WORKDIR /app
 
-RUN corepack enable
+ENV PNPM_HOME=/pnpm
+ENV PATH=$PNPM_HOME:$PATH
+
+RUN corepack enable && pnpm config set store-dir /pnpm/store
 
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml turbo.json ./
+COPY apps/api/package.json apps/api/package.json
 COPY apps/web/package.json apps/web/package.json
 
-RUN pnpm install --frozen-lockfile
+RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
+    pnpm fetch --frozen-lockfile
 
 COPY . .
+
+RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
+    pnpm install --frozen-lockfile --offline
 
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV CI=1
