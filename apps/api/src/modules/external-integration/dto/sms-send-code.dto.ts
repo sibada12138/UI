@@ -7,7 +7,7 @@ export class SmsSendCodeDto {
   unloginToken!: string;
 
   @IsString()
-  @Matches(/^1\d{10}$/)
+  @Matches(/^\d{4,20}$/)
   phone!: string;
 
   @IsString()

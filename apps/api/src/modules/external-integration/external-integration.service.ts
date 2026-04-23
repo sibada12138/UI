@@ -1,7 +1,8 @@
-import {
+﻿import {
   BadGatewayException,
   BadRequestException,
   Injectable,
+  Logger,
 } from '@nestjs/common';
 import { createHash, randomBytes } from 'crypto';
 import { promises as fs } from 'fs';
@@ -113,13 +114,27 @@ export type CrediblePhoneResult = {
 
 @Injectable()
 export class ExternalIntegrationService {
+  private readonly logger = new Logger(ExternalIntegrationService.name);
+
   private readonly suggestClientId = process.env.EXTERNAL_SUGGEST_CLIENT_ID
     ? Number(process.env.EXTERNAL_SUGGEST_CLIENT_ID)
     : 1189857434;
 
+  private readonly loginClientId = process.env.EXTERNAL_LOGIN_CLIENT_ID
+    ? Number(process.env.EXTERNAL_LOGIN_CLIENT_ID)
+    : 1189857435;
+
+  private readonly captchaClientId = process.env.EXTERNAL_CAPTCHA_CLIENT_ID
+    ? Number(process.env.EXTERNAL_CAPTCHA_CLIENT_ID)
+    : 1089867636;
+
   private readonly appClientId = process.env.EXTERNAL_APP_CLIENT_ID
     ? Number(process.env.EXTERNAL_APP_CLIENT_ID)
     : 1089867636;
+
+  private readonly vipClientId = process.env.EXTERNAL_VIP_CLIENT_ID
+    ? Number(process.env.EXTERNAL_VIP_CLIENT_ID)
+    : 1089867602;
 
   private readonly zipVersion = process.env.EXTERNAL_ZIP_VERSION ?? '2.9.91';
   private readonly webVersion = process.env.EXTERNAL_WEB_VERSION ?? '2.9.0';
@@ -139,6 +154,26 @@ export class ExternalIntegrationService {
 
   private getDeviceId(deviceId?: string) {
     return (deviceId?.trim() || this.defaultDeviceId).slice(0, 64);
+  }
+
+  private normalizeExternalPhone(phone: string) {
+    const normalized = normalizePhone(phone);
+    return normalized.replace(/\D/g, '');
+  }
+
+  private isValidExternalPhone(phone: string) {
+    return /^\d{4,20}$/.test(phone);
+  }
+
+  private maskPhoneForLog(phone: string) {
+    const normalized = this.normalizeExternalPhone(phone);
+    if (!normalized) {
+      return '';
+    }
+    if (normalized.length <= 7) {
+      return `${normalized.slice(0, 2)}***${normalized.slice(-2)}`;
+    }
+    return `${normalized.slice(0, 3)}****${normalized.slice(-4)}`;
   }
 
   private getDispatcher() {
@@ -185,7 +220,14 @@ export class ExternalIntegrationService {
     let response: Response;
     try {
       response = await fetch(url, requestInit);
-    } catch {
+    } catch (error) {
+      this.logger.error(
+        `external request network error ${JSON.stringify({
+          url,
+          method: init.method ?? 'GET',
+          error: error instanceof Error ? error.message : String(error),
+        })}`,
+      );
       throw new BadGatewayException('EXTERNAL_NETWORK_ERROR');
     }
 
@@ -194,9 +236,28 @@ export class ExternalIntegrationService {
     try {
       parsed = JSON.parse(rawText) as RawJson;
     } catch {
+      this.logger.error(
+        `external request invalid json ${JSON.stringify({
+          url,
+          method: init.method ?? 'GET',
+          status: response.status,
+          body: rawText.slice(0, 800),
+        })}`,
+      );
       throw new BadGatewayException('EXTERNAL_RESPONSE_INVALID_JSON');
     }
     if (!response.ok) {
+      this.logger.error(
+        `external request http error ${JSON.stringify({
+          url,
+          method: init.method ?? 'GET',
+          status: response.status,
+          body:
+            typeof parsed === 'object' && parsed
+              ? parsed
+              : rawText.slice(0, 800),
+        })}`,
+      );
       throw new BadGatewayException(`EXTERNAL_HTTP_${response.status}`);
     }
     return { response, data: parsed as RawJson };
@@ -220,11 +281,23 @@ export class ExternalIntegrationService {
     let response: Response;
     try {
       response = await fetch(url, requestInit);
-    } catch {
+    } catch (error) {
+      this.logger.error(
+        `external binary network error ${JSON.stringify({
+          url,
+          error: error instanceof Error ? error.message : String(error),
+        })}`,
+      );
       throw new BadGatewayException('EXTERNAL_NETWORK_ERROR');
     }
 
     if (!response.ok) {
+      this.logger.error(
+        `external binary http error ${JSON.stringify({
+          url,
+          status: response.status,
+        })}`,
+      );
       throw new BadGatewayException(`EXTERNAL_HTTP_${response.status}`);
     }
 
@@ -262,11 +335,11 @@ export class ExternalIntegrationService {
     const captchaUrl = new URL('https://api.account.meitu.com/captcha/show.json');
     captchaUrl.searchParams.set('t', String(Date.now()));
     captchaUrl.searchParams.set('unlogin_token', token);
-    captchaUrl.searchParams.set('client_id', String(this.appClientId));
+    captchaUrl.searchParams.set('client_id', String(this.captchaClientId));
     captchaUrl.searchParams.set('zip_version', this.zipVersion);
     const captcha = await this.requestBinary(captchaUrl.toString(), {
       'Unlogin-Token': token,
-      Referer: 'https://account.meitu.com/',
+      Referer: captchaUrl.toString(),
     });
     return {
       captchaMimeType: captcha.contentType,
@@ -274,14 +347,34 @@ export class ExternalIntegrationService {
     };
   }
 
-  private assertApiSuccess(data: RawJson) {
+  private assertApiSuccess(
+    data: RawJson,
+    context = 'external_api',
+    extra: Record<string, unknown> = {},
+  ) {
     const meta = data.meta as RawJson | undefined;
     if (typeof meta?.code === 'number' && meta.code !== 0) {
+      this.logger.warn(
+        `external api rejected ${JSON.stringify({
+          context,
+          code: meta.code,
+          msg: this.toSafeMessage(meta.msg ?? meta.error),
+          ...extra,
+        })}`,
+      );
       throw new BadRequestException(
         this.toSafeMessage(meta.msg ?? meta.error ?? 'EXTERNAL_API_FAILED'),
       );
     }
     if (typeof data.code === 'number' && data.code !== 0) {
+      this.logger.warn(
+        `external api rejected ${JSON.stringify({
+          context,
+          code: data.code,
+          msg: this.toSafeMessage(data.message ?? data.msg),
+          ...extra,
+        })}`,
+      );
       throw new BadRequestException(
         this.toSafeMessage(data.message ?? data.msg ?? 'EXTERNAL_API_FAILED'),
       );
@@ -626,7 +719,9 @@ export class ExternalIntegrationService {
     const suggestResult = await this.requestJson(suggestUrl.toString(), {
       method: 'GET',
     });
-    this.assertApiSuccess(suggestResult.data);
+    this.assertApiSuccess(suggestResult.data, 'sms_bootstrap_suggest', {
+      deviceId,
+    });
 
     const unloginToken =
       suggestResult.response.headers.get('unlogin-token') ??
@@ -644,11 +739,11 @@ export class ExternalIntegrationService {
     );
     captchaUrl.searchParams.set('t', String(Date.now()));
     captchaUrl.searchParams.set('unlogin_token', unloginToken);
-    captchaUrl.searchParams.set('client_id', String(this.appClientId));
+    captchaUrl.searchParams.set('client_id', String(this.captchaClientId));
     captchaUrl.searchParams.set('zip_version', this.zipVersion);
     const captcha = await this.requestBinary(captchaUrl.toString(), {
       'Unlogin-Token': unloginToken,
-      Referer: 'https://account.meitu.com/',
+      Referer: captchaUrl.toString(),
     });
 
     const shouldAutoOcr = dto.autoOcr !== false;
@@ -690,6 +785,13 @@ export class ExternalIntegrationService {
   async smsSendCode(dto: SmsSendCodeDto, actorId?: string) {
     const deviceId = this.getDeviceId(dto.deviceId);
     const token = String(dto.unloginToken ?? '').trim();
+    if (!token) {
+      throw new BadRequestException('UNLOGIN_TOKEN_MISSING');
+    }
+    const normalizedPhone = this.normalizeExternalPhone(dto.phone);
+    if (!this.isValidExternalPhone(normalizedPhone)) {
+      throw new BadRequestException('PHONE_INVALID');
+    }
     const manualCaptcha = String(dto.captcha ?? '').trim();
     const captchaTextCandidates: string[] = [];
 
@@ -711,7 +813,11 @@ export class ExternalIntegrationService {
           }
         } catch (error) {
           if (attempt >= 2) {
-            throw error;
+            const code =
+              error instanceof Error && error.message.trim()
+                ? error.message.trim()
+                : 'CAPTCHA_AUTO_RECOGNIZE_FAILED';
+            throw new BadRequestException(code);
           }
         }
       }
@@ -743,7 +849,7 @@ export class ExternalIntegrationService {
 
     for (const encodedCaptcha of captchaCandidateList) {
       const form = {
-        client_id: String(this.suggestClientId + 1),
+        client_id: String(this.loginClientId),
         client_language: 'zh-CN',
         os_type: 'web',
         gnum: this.buildGnum(),
@@ -756,7 +862,7 @@ export class ExternalIntegrationService {
         mt_g: deviceId,
         type: 'reset_password',
         phone_cc: String(dto.phoneCc),
-        phone: normalizePhone(dto.phone),
+        phone: normalizedPhone,
         captcha: encodedCaptcha,
       };
       try {
@@ -768,18 +874,29 @@ export class ExternalIntegrationService {
             Referer: url,
           },
         });
-        this.assertApiSuccess(result.data);
+        this.assertApiSuccess(result.data, 'sms_send_code', {
+          phoneMasked: this.maskPhoneForLog(normalizedPhone),
+          phoneCc: String(dto.phoneCc),
+          deviceId,
+          unloginTokenPrefix: token.slice(0, 8),
+        });
         break;
       } catch (error) {
         lastError = error;
       }
     }
     if (!result) {
-      throw (lastError as Error) ?? new BadRequestException('EXTERNAL_API_FAILED');
+      if (lastError instanceof BadRequestException) {
+        throw lastError;
+      }
+      if (lastError instanceof Error && lastError.message.trim()) {
+        throw new BadRequestException(lastError.message.trim());
+      }
+      throw new BadRequestException('EXTERNAL_API_FAILED');
     }
 
     await this.logAction(actorId, 'EXTERNAL_SMS_SEND_CODE', {
-      phoneMasked: `${String(dto.phone).slice(0, 3)}****${String(dto.phone).slice(-4)}`,
+      phoneMasked: this.maskPhoneForLog(dto.phone),
       phoneCc: dto.phoneCc,
       deviceId,
       unloginTokenPrefix: token.slice(0, 8),
@@ -789,9 +906,13 @@ export class ExternalIntegrationService {
 
   async smsLogin(dto: SmsLoginDto, actorId?: string) {
     const deviceId = this.getDeviceId(dto.deviceId);
+    const normalizedPhone = this.normalizeExternalPhone(dto.phone);
+    if (!this.isValidExternalPhone(normalizedPhone)) {
+      throw new BadRequestException('PHONE_INVALID');
+    }
     const url = 'https://account.meitu.com/oauth/access_token.json';
     const form = {
-      client_id: String(this.suggestClientId + 1),
+      client_id: String(this.loginClientId),
       client_language: 'zh-Hans',
       os_type: 'web',
       zip_version: this.zipVersion,
@@ -800,7 +921,7 @@ export class ExternalIntegrationService {
       app_package: 'com.meitu.mtxx',
       source_from: '',
       grant_type: 'phone_login_by_login_verify_code',
-      phone: normalizePhone(dto.phone),
+      phone: normalizedPhone,
       phone_cc: String(dto.phoneCc),
       verify_code: dto.verifyCode,
       agreed_authorization: '1',
@@ -814,7 +935,12 @@ export class ExternalIntegrationService {
         Referer: url,
       },
     });
-    this.assertApiSuccess(result.data);
+    this.assertApiSuccess(result.data, 'sms_login', {
+      phoneMasked: this.maskPhoneForLog(normalizedPhone),
+      phoneCc: String(dto.phoneCc),
+      deviceId,
+      unloginTokenPrefix: dto.unloginToken.trim().slice(0, 8),
+    });
     const responseData = result.data.response as RawJson | undefined;
     const cookie = this.extractCookieHeader(result.response);
     const accessToken =
@@ -869,7 +995,9 @@ export class ExternalIntegrationService {
         Referer: 'https://account.meitu.com/',
       },
     });
-    this.assertApiSuccess(result.data);
+    this.assertApiSuccess(result.data, 'qr_create', {
+      deviceId: bootstrap.deviceId,
+    });
     const qrCode = String(
       ((result.data.response as RawJson | undefined)?.qr_code as string) ?? '',
     );
@@ -906,7 +1034,9 @@ export class ExternalIntegrationService {
         Referer: 'https://account.meitu.com/',
       },
     });
-    this.assertApiSuccess(result.data);
+    this.assertApiSuccess(result.data, 'qr_status', {
+      deviceId: dto.deviceId,
+    });
     return result.data;
   }
 
@@ -933,7 +1063,10 @@ export class ExternalIntegrationService {
         Referer: url,
       },
     });
-    this.assertApiSuccess(result.data);
+    this.assertApiSuccess(result.data, 'qr_login', {
+      deviceId: dto.deviceId,
+      unloginTokenPrefix: dto.unloginToken.slice(0, 8),
+    });
     const cookie = this.extractCookieHeader(result.response);
     const accessToken =
       this.findFirstStringValue(result.data, ['access_token', 'accesstoken']) ??
@@ -978,7 +1111,7 @@ export class ExternalIntegrationService {
         },
       },
     );
-    this.assertApiSuccess(result.data);
+    this.assertApiSuccess(result.data, 'credible_phone');
 
     const responseData = result.data.response as RawJson | undefined;
     const data = Array.isArray(responseData?.data)
@@ -1020,17 +1153,22 @@ export class ExternalIntegrationService {
   async vipOverview(dto: VipOverviewDto, actorId?: string) {
     const commonHeaders = {
       'Access-Token': dto.accessToken,
+      Connection: 'Keep-Alive',
+      'Content-Type': 'application/x-www-form-urlencoded; Charset=UTF-8',
       ...(dto.cookie ? { Cookie: dto.cookie } : {}),
     };
 
     const userVip = await this.requestJson(
-      `https://h5.xiuxiu.meitu.com/v1/h5/vip/new_sub_detail.json?client_id=${this.appClientId}&version=9670`,
+      `https://h5.xiuxiu.meitu.com/v1/h5/vip/new_sub_detail.json?client_id=${this.vipClientId}&version=9670`,
       {
         method: 'GET',
         headers: commonHeaders,
       },
     );
-    this.assertApiSuccess(userVip.data);
+    this.assertApiSuccess(userVip.data, 'vip_overview_user', {
+      clientId: this.vipClientId,
+      hasCookie: Boolean(dto.cookie),
+    });
 
     const winkVip = await this.requestJson(
       'https://api-h5-sub.meitu.com/h5/user/vip_info_by_group.json?app_id=6829803307010000000&vip_group=wink_group',
@@ -1043,7 +1181,9 @@ export class ExternalIntegrationService {
         },
       },
     );
-    this.assertApiSuccess(winkVip.data);
+    this.assertApiSuccess(winkVip.data, 'vip_overview_wink', {
+      hasCookie: Boolean(dto.cookie),
+    });
 
     await this.logAction(actorId, 'EXTERNAL_VIP_OVERVIEW', {
       hasCookie: Boolean(dto.cookie),
@@ -1093,7 +1233,9 @@ export class ExternalIntegrationService {
       },
       form: payload,
     });
-    this.assertApiSuccess(tx.data);
+    this.assertApiSuccess(tx.data, 'recharge_h5_transaction', {
+      channel: input.channel,
+    });
 
     const financialContent =
       this.findFirstStringValue(tx.data, ['financial_content']) ?? '';
@@ -1153,7 +1295,9 @@ export class ExternalIntegrationService {
       },
       form,
     });
-    this.assertApiSuccess(order.data);
+    this.assertApiSuccess(order.data, 'recharge_order_create', {
+      channel: input.channel,
+    });
     const retCode = Number((order.data as RawJson).ret ?? 0);
     if (Number.isFinite(retCode) && retCode !== 0) {
       throw new BadRequestException(
@@ -1385,3 +1529,4 @@ export class ExternalIntegrationService {
     }
   }
 }
+

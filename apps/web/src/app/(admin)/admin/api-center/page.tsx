@@ -1,9 +1,10 @@
-"use client";
+﻿"use client";
 
-import { useEffect, useState } from "react";
 import Image from "next/image";
-import { adminApiRequest } from "@/lib/admin-api";
+import { useEffect, useMemo, useState } from "react";
 import { fetchAdminAccounts, type AdminAccountItem } from "@/lib/admin-accounts";
+import { adminApiRequest } from "@/lib/admin-api";
+import { apiRequest } from "@/lib/api";
 import { toErrorMessage } from "@/lib/error-message";
 import { pushToast } from "@/lib/toast";
 
@@ -12,6 +13,18 @@ type TestResult = {
   detail: string;
   output: string;
 };
+
+type SmsBootstrapResponse = {
+  unloginToken?: string;
+  captchaMimeType?: string;
+  captchaBase64?: string;
+  captchaAutoText?: string | null;
+  captchaAutoError?: string | null;
+  phoneCc?: number | string;
+  deviceId?: string;
+};
+
+const BUILD_STAMP = "api-center-2026-04-23-v2";
 
 function asJson(input: unknown) {
   try {
@@ -22,7 +35,11 @@ function asJson(input: unknown) {
 }
 
 function initResult(): TestResult {
-  return { status: "idle", detail: "未执行", output: "" };
+  return {
+    status: "idle",
+    detail: "未执行",
+    output: "",
+  };
 }
 
 export default function ApiCenterPage() {
@@ -35,6 +52,7 @@ export default function ApiCenterPage() {
   const [accessToken, setAccessToken] = useState("");
   const [cookie, setCookie] = useState("");
   const [channel, setChannel] = useState("网页");
+
   const [accounts, setAccounts] = useState<AdminAccountItem[]>([]);
   const [selectedAccountId, setSelectedAccountId] = useState("");
 
@@ -43,50 +61,52 @@ export default function ApiCenterPage() {
   const [smsCaptchaAutoError, setSmsCaptchaAutoError] = useState("");
   const [results, setResults] = useState<Record<string, TestResult>>({});
 
+  const selectedAccount = useMemo(
+    () => accounts.find((item) => item.id === selectedAccountId) ?? null,
+    [accounts, selectedAccountId],
+  );
+  const hasAccessToken = Boolean(accessToken.trim());
+
+  function statusOf(key: string) {
+    return results[key] ?? initResult();
+  }
+
   function setRunning(key: string) {
     setResults((prev) => ({
       ...prev,
-      [key]: { ...(prev[key] ?? initResult()), status: "running", detail: "执行中..." },
+      [key]: {
+        ...(prev[key] ?? initResult()),
+        status: "running",
+        detail: "执行中...",
+      },
     }));
   }
 
-  function setOk(key: string, detail: string, output: string) {
+  function setOk(key: string, output: unknown) {
     setResults((prev) => ({
       ...prev,
-      [key]: { status: "ok", detail, output },
+      [key]: {
+        status: "ok",
+        detail: "调用成功",
+        output: asJson(output),
+      },
     }));
   }
 
   function setFail(key: string, detail: string) {
     setResults((prev) => ({
       ...prev,
-      [key]: { status: "fail", detail, output: detail },
+      [key]: {
+        status: "fail",
+        detail,
+        output: detail,
+      },
     }));
   }
 
-  function statusOf(key: string) {
-    return results[key] ?? initResult();
-  }
-
-  async function loadAccounts() {
-    try {
-      const items = await fetchAdminAccounts();
-      setAccounts(items);
-      if (!selectedAccountId && items?.[0]?.id) {
-        const first = items[0];
-        setSelectedAccountId(first.id);
-        setPhone(first.phone || "");
-        setAccessToken(first.accessToken || "");
-        setCookie(first.cookie || "");
-      }
-    } catch (error) {
-      pushToast({ type: "error", message: toErrorMessage(error, "账户列表加载失败") });
-    }
-  }
-
-  function applyAccountById(accountId: string) {
+  function applyAccount(accountId: string, source: AdminAccountItem[]) {
     setSelectedAccountId(accountId);
-    const target = accounts.find((item) => item.id === accountId);
+    const target = source.find((item) => item.id === accountId);
     if (!target) {
       return;
     }
@@ -95,10 +115,63 @@ export default function ApiCenterPage() {
     setCookie(target.cookie || "");
   }
 
+  async function loadAccounts() {
+    try {
+      const items = await fetchAdminAccounts();
+      setAccounts(items);
+
+      if (items.length === 0) {
+        setSelectedAccountId("");
+        return;
+      }
+
+      const current = items.find((item) => item.id === selectedAccountId);
+      const currentHasToken = Boolean(String(current?.accessToken ?? "").trim());
+      const target =
+        (current && currentHasToken ? current : undefined) ??
+        items.find((item) => String(item.accessToken ?? "").trim()) ??
+        current ??
+        items[0];
+
+      if (target) {
+        applyAccount(target.id, items);
+      }
+    } catch (error) {
+      pushToast({
+        type: "error",
+        title: "加载失败",
+        message: toErrorMessage(error, "账户列表加载失败"),
+      });
+    }
+  }
+
   useEffect(() => {
     void loadAccounts();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  function ensureAccessToken(actionName: string) {
+    if (accessToken.trim()) {
+      return true;
+    }
+    const fromSelected = String(selectedAccount?.accessToken ?? "").trim();
+    if (fromSelected) {
+      setAccessToken(fromSelected);
+      return true;
+    }
+    const fallback = accounts.find((item) => String(item.accessToken ?? "").trim());
+    if (fallback) {
+      applyAccount(fallback.id, accounts);
+      setAccessToken(String(fallback.accessToken).trim());
+      return true;
+    }
+    pushToast({
+      type: "warning",
+      title: "缺少 AccessToken",
+      message: `${actionName} 需要 AccessToken，请先完成登录提交。`,
+    });
+    return false;
+  }
 
   async function runCase(
     key: string,
@@ -109,15 +182,13 @@ export default function ApiCenterPage() {
     setRunning(key);
     try {
       const data = await run();
-      if (onSuccess) {
-        onSuccess(data);
-      }
-      setOk(key, "接口调用成功", asJson(data));
-      pushToast({ type: "success", message: `${name}：成功` });
+      onSuccess?.(data);
+      setOk(key, data);
+      pushToast({ type: "success", title: "调用成功", message: `${name} 已完成` });
     } catch (error) {
       const text = toErrorMessage(error, "请求失败");
       setFail(key, text);
-      pushToast({ type: "error", message: `${name}：${text}` });
+      pushToast({ type: "error", title: `${name}失败`, message: text });
     }
   }
 
@@ -126,8 +197,82 @@ export default function ApiCenterPage() {
       <article className="apple-panel p-6">
         <h1 className="h-display section-title">API 中心</h1>
         <p className="mt-2 text-sm text-[var(--text-muted)]">
-          这里只测试美图接口链路（/api 目录对应的短信、扫码、VIP、充值能力），不测试站内页面接口。
+          用于测试项目目录 `api/` 对应的美图链路：短信、扫码、VIP、渠道可用性。
         </p>
+        <p className="mt-2 text-xs text-[var(--text-subtle)]">前端构建标识：{BUILD_STAMP}</p>
+      </article>
+
+      <article className="apple-panel p-4">
+        <h2 className="mb-3 text-xl font-semibold">系统链路</h2>
+        <div className="table-shell">
+          <table className="table-basic">
+            <thead>
+              <tr>
+                <th>接口</th>
+                <th>路径</th>
+                <th>状态</th>
+                <th>结果</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>API 服务标识</td>
+                <td className="font-mono text-xs">GET /api</td>
+                <td>{statusOf("system_ping").detail}</td>
+                <td>{statusOf("system_ping").status}</td>
+                <td>
+                  <button
+                    className="btn-pill"
+                    type="button"
+                    onClick={() => void runCase("system_ping", "API服务标识", () => apiRequest("/", { method: "GET" }))}
+                  >
+                    执行
+                  </button>
+                </td>
+              </tr>
+              <tr>
+                <td>账户列表</td>
+                <td className="font-mono text-xs">GET /admin/recharge/tasks/accounts</td>
+                <td>{statusOf("system_accounts").detail}</td>
+                <td>{statusOf("system_accounts").status}</td>
+                <td>
+                  <button
+                    className="btn-pill"
+                    type="button"
+                    onClick={() => void runCase("system_accounts", "账户列表", () => adminApiRequest("/admin/recharge/tasks/accounts"))}
+                  >
+                    执行
+                  </button>
+                </td>
+              </tr>
+              <tr>
+                <td>任务通知轮询</td>
+                <td className="font-mono text-xs">GET /admin/recharge/tasks/notifications</td>
+                <td>{statusOf("system_notifications").detail}</td>
+                <td>{statusOf("system_notifications").status}</td>
+                <td>
+                  <button
+                    className="btn-pill"
+                    type="button"
+                    onClick={() =>
+                      void runCase(
+                        "system_notifications",
+                        "任务通知轮询",
+                        () =>
+                          adminApiRequest(
+                            `/admin/recharge/tasks/notifications?since=${encodeURIComponent(new Date(Date.now() - 5 * 60 * 1000).toISOString())}&limit=5`,
+                          ),
+                      )
+                    }
+                  >
+                    执行
+                  </button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
       </article>
 
       <article className="apple-panel p-6">
@@ -136,18 +281,19 @@ export default function ApiCenterPage() {
           <select
             className="field md:col-span-2"
             value={selectedAccountId}
-            onChange={(e) => applyAccountById(e.target.value)}
+            onChange={(e) => applyAccount(e.target.value, accounts)}
           >
             <option value="">从账户中心选择账号</option>
             {accounts.map((item) => (
               <option key={item.id} value={item.id}>
-                {item.phoneMasked || item.phone} | {item.token} | {item.status}
+                {(item.phoneMasked || item.phone || "-") + " | " + item.token + " | " + item.status}
               </option>
             ))}
           </select>
           <button className="btn-pill md:col-span-2" type="button" onClick={() => void loadAccounts()}>
             刷新账户列表
           </button>
+
           <input className="field" placeholder="deviceId" value={deviceId} onChange={(e) => setDeviceId(e.target.value)} />
           <input className="field" placeholder="unloginToken" value={unloginToken} onChange={(e) => setUnloginToken(e.target.value)} />
           <input className="field" placeholder="手机号" value={phone} onChange={(e) => setPhone(e.target.value)} />
@@ -159,17 +305,30 @@ export default function ApiCenterPage() {
             <option value="联想">联想</option>
             <option value="Android">Android</option>
           </select>
-          <input className="field md:col-span-2 xl:col-span-2" placeholder="Access-Token" value={accessToken} onChange={(e) => setAccessToken(e.target.value)} />
-          <input className="field md:col-span-2 xl:col-span-2" placeholder="Cookie（可选）" value={cookie} onChange={(e) => setCookie(e.target.value)} />
+          <input
+            className={`field md:col-span-2 xl:col-span-2 ${hasAccessToken ? "" : "field-error"}`}
+            placeholder="AccessToken"
+            value={accessToken}
+            onChange={(e) => setAccessToken(e.target.value)}
+          />
+          <input
+            className="field md:col-span-2 xl:col-span-2"
+            placeholder="Cookie（可选）"
+            value={cookie}
+            onChange={(e) => setCookie(e.target.value)}
+          />
         </div>
+        <p className="mt-3 text-xs text-[var(--text-muted)]">
+          当前账户 AccessToken：{hasAccessToken ? "已就绪" : "缺失（请先完成登录提交）"}
+        </p>
 
         <div className="mt-4 rounded-[12px] border border-[var(--card-border)] bg-[var(--card-bg-soft)] p-3">
-          <p className="text-xs text-[var(--text-muted)]">短信图形验证码预览（sms/bootstrap 返回）</p>
+          <p className="text-xs text-[var(--text-muted)]">短信图形验证码预览（当前验证码）</p>
           {smsCaptchaImage ? (
             <Image
               src={smsCaptchaImage}
               alt="短信图形验证码"
-              width={400}
+              width={420}
               height={96}
               unoptimized
               className="mt-2 h-20 w-full object-contain"
@@ -179,7 +338,10 @@ export default function ApiCenterPage() {
           )}
           <div className="mt-2 grid gap-1 text-xs text-[var(--text-muted)]">
             <p>YOLO 识别结果：{smsCaptchaAutoText || "-"}</p>
-            <p>YOLO 识别状态：{smsCaptchaAutoError ? `失败(${smsCaptchaAutoError})` : smsCaptchaAutoText ? "成功" : "-"}</p>
+            <p>
+              YOLO 识别状态：
+              {smsCaptchaAutoError ? `失败（${smsCaptchaAutoError}）` : smsCaptchaAutoText ? "成功" : "-"}
+            </p>
           </div>
         </div>
       </article>
@@ -187,7 +349,7 @@ export default function ApiCenterPage() {
       <article className="apple-panel p-4">
         <h2 className="mb-3 text-xl font-semibold">短信链路</h2>
         <p className="mb-3 text-sm text-[var(--text-muted)]">
-          图形验证码由后端自动调用 YOLO 识别并发送短信，本页不再提供单独 YOLO 测试接口。
+          先单独获取验证码，再对当前验证码执行 YOLO 识别，最后再发短信，便于定位是取图问题还是识别问题。
         </p>
         <div className="table-shell">
           <table className="table-basic">
@@ -217,27 +379,69 @@ export default function ApiCenterPage() {
                         () =>
                           adminApiRequest("/admin/external/sms/bootstrap", {
                             method: "POST",
-                            body: { deviceId },
+                            body: { deviceId, autoOcr: false },
                           }),
                         (raw) => {
-                          const data = raw as {
-                            unloginToken?: string;
-                            captchaMimeType?: string;
-                            captchaBase64?: string;
-                            captchaAutoText?: string | null;
-                            captchaAutoError?: string | null;
-                            phoneCc?: number;
-                            deviceId?: string;
-                          };
-                          if (data.unloginToken) setUnloginToken(data.unloginToken);
-                          if (data.phoneCc) setPhoneCc(String(data.phoneCc));
+                          const data = raw as SmsBootstrapResponse;
+                          if (data.unloginToken) setUnloginToken(String(data.unloginToken));
+                          if (data.phoneCc != null) setPhoneCc(String(data.phoneCc));
                           if (data.deviceId) setDeviceId(String(data.deviceId));
                           if (data.captchaMimeType && data.captchaBase64) {
-                            const imageData = `data:${data.captchaMimeType};base64,${data.captchaBase64}`;
-                            setSmsCaptchaImage(imageData);
+                            setSmsCaptchaImage(`data:${data.captchaMimeType};base64,${data.captchaBase64}`);
                           }
                           setSmsCaptchaAutoText(String(data.captchaAutoText ?? ""));
                           setSmsCaptchaAutoError(String(data.captchaAutoError ?? ""));
+                        },
+                      )
+                    }
+                  >
+                    执行
+                  </button>
+                </td>
+              </tr>
+              <tr>
+                <td>YOLO 识别当前验证码</td>
+                <td className="font-mono text-xs">POST /captcha/recognize</td>
+                <td>{statusOf("sms_yolo").detail}</td>
+                <td>{statusOf("sms_yolo").status}</td>
+                <td>
+                  <button
+                    className="btn-pill"
+                    type="button"
+                    onClick={() =>
+                      void runCase(
+                        "sms_yolo",
+                        "YOLO识别",
+                        async () => {
+                          if (!smsCaptchaImage) {
+                            throw new Error("请先获取图形验证码");
+                          }
+                          return apiRequest<{
+                            success: boolean;
+                            message?: string;
+                            data?: { text?: string; detections?: unknown[] };
+                          }>("/captcha/recognize", {
+                            method: "POST",
+                            body: {
+                              imageBase64: smsCaptchaImage,
+                            },
+                          });
+                        },
+                        (raw) => {
+                          const data = raw as {
+                            success: boolean;
+                            message?: string;
+                            data?: { text?: string };
+                          };
+                          if (!data.success) {
+                            throw new Error(data.message || "YOLO识别失败");
+                          }
+                          const text = String(data.data?.text ?? "").trim();
+                          if (!text) {
+                            throw new Error("YOLO未识别出验证码");
+                          }
+                          setSmsCaptchaAutoText(text);
+                          setSmsCaptchaAutoError("");
                         },
                       )
                     }
@@ -259,7 +463,13 @@ export default function ApiCenterPage() {
                       void runCase("sms_send", "发送短信", () =>
                         adminApiRequest("/admin/external/sms/send-code", {
                           method: "POST",
-                          body: { unloginToken, phone, phoneCc, deviceId },
+                          body: {
+                            unloginToken,
+                            phone,
+                            phoneCc,
+                            deviceId,
+                            captcha: smsCaptchaAutoText || undefined,
+                          },
                         }),
                       )
                     }
@@ -284,7 +494,13 @@ export default function ApiCenterPage() {
                         () =>
                           adminApiRequest("/admin/external/sms/login", {
                             method: "POST",
-                            body: { unloginToken, phone, phoneCc, verifyCode, deviceId },
+                            body: {
+                              unloginToken,
+                              phone,
+                              phoneCc,
+                              verifyCode,
+                              deviceId,
+                            },
                           }),
                         (raw) => {
                           const data = raw as { accessToken?: string; cookie?: string };
@@ -362,13 +578,10 @@ export default function ApiCenterPage() {
                     className="btn-pill"
                     type="button"
                     onClick={() =>
-                      void runCase(
-                        "qr_status",
-                        "扫码状态",
-                        () =>
-                          adminApiRequest(
-                            `/admin/external/qr/status?qrCode=${encodeURIComponent(qrCode)}&unloginToken=${encodeURIComponent(unloginToken)}&deviceId=${encodeURIComponent(deviceId)}`,
-                          ),
+                      void runCase("qr_status", "扫码状态", () =>
+                        adminApiRequest(
+                          `/admin/external/qr/status?qrCode=${encodeURIComponent(qrCode)}&unloginToken=${encodeURIComponent(unloginToken)}&deviceId=${encodeURIComponent(deviceId)}`,
+                        ),
                       )
                     }
                   >
@@ -377,7 +590,7 @@ export default function ApiCenterPage() {
                 </td>
               </tr>
               <tr>
-                <td>扫码执行登录</td>
+                <td>扫码登录</td>
                 <td className="font-mono text-xs">POST /admin/external/qr/login</td>
                 <td>{statusOf("qr_login").detail}</td>
                 <td>{statusOf("qr_login").status}</td>
@@ -434,14 +647,15 @@ export default function ApiCenterPage() {
                   <button
                     className="btn-pill"
                     type="button"
-                    onClick={() =>
+                    onClick={() => {
+                      if (!ensureAccessToken("VIP 查询")) return;
                       void runCase("vip_overview", "VIP总览", () =>
                         adminApiRequest("/admin/external/vip/overview", {
                           method: "POST",
                           body: { accessToken, cookie },
                         }),
-                      )
-                    }
+                      );
+                    }}
                   >
                     执行
                   </button>
@@ -456,14 +670,15 @@ export default function ApiCenterPage() {
                   <button
                     className="btn-pill"
                     type="button"
-                    onClick={() =>
-                      void runCase("capability_single", "单渠道能力检查", () =>
+                    onClick={() => {
+                      if (!ensureAccessToken("单渠道能力检测")) return;
+                      void runCase("capability_single", "单渠道能力检测", () =>
                         adminApiRequest("/admin/recharge/tasks/capability/check", {
                           method: "POST",
                           body: { accessToken, cookie, checkAll: false, channel },
                         }),
-                      )
-                    }
+                      );
+                    }}
                   >
                     执行
                   </button>
@@ -478,14 +693,15 @@ export default function ApiCenterPage() {
                   <button
                     className="btn-pill"
                     type="button"
-                    onClick={() =>
-                      void runCase("capability_all", "全部渠道能力检查", () =>
+                    onClick={() => {
+                      if (!ensureAccessToken("全渠道能力检测")) return;
+                      void runCase("capability_all", "全渠道能力检测", () =>
                         adminApiRequest("/admin/recharge/tasks/capability/check", {
                           method: "POST",
                           body: { accessToken, cookie, checkAll: true },
                         }),
-                      )
-                    }
+                      );
+                    }}
                   >
                     执行
                   </button>
@@ -505,7 +721,7 @@ export default function ApiCenterPage() {
                 {key} - {result.status}
               </summary>
               <pre className="mt-2 overflow-auto rounded-[8px] border border-[var(--card-border)] bg-white p-3 text-xs leading-5">
-{result.output || "暂无输出"}
+                {result.output || "暂无输出"}
               </pre>
             </details>
           ))}

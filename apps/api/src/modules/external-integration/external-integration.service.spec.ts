@@ -10,13 +10,16 @@ describe('ExternalIntegrationService channel config', () => {
       create: jest.fn(),
     },
   } as any;
+  const captchaOcrMock = {
+    recognizeCaptcha: jest.fn(),
+  } as any;
 
   let service: ExternalIntegrationService;
   let tempDir = '';
 
   beforeEach(async () => {
     tempDir = await mkdtemp(path.join(os.tmpdir(), 'recharge-channel-config-'));
-    service = new ExternalIntegrationService(prismaMock);
+    service = new ExternalIntegrationService(prismaMock, captchaOcrMock);
   });
 
   afterEach(async () => {

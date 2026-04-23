@@ -1,4 +1,4 @@
-import {
+﻿import {
   BadRequestException,
   ForbiddenException,
   Injectable,
@@ -188,9 +188,32 @@ export class TokenService {
       normalized.includes('captcha_auto_recognize_failed') ||
       normalized.includes('captcha') ||
       normalized.includes('verify') ||
-      normalized.includes('验证') ||
-      normalized.includes('安全')
+      normalized.includes('captcha_ocr_')
     );
+  }
+
+  private getErrorCode(error: unknown, fallback = 'REQUEST_FAILED') {
+    if (error instanceof BadRequestException) {
+      const response = error.getResponse();
+      if (typeof response === 'string' && response.trim()) {
+        return response.trim();
+      }
+      if (
+        response &&
+        typeof response === 'object' &&
+        'message' in response &&
+        typeof (response as { message?: unknown }).message === 'string'
+      ) {
+        const message = String((response as { message: string }).message).trim();
+        if (message) {
+          return message;
+        }
+      }
+    }
+    if (error instanceof Error && error.message.trim()) {
+      return error.message.trim();
+    }
+    return fallback;
   }
 
   private async getActiveTokenOrThrow(token: string, submitIp?: string) {
@@ -283,7 +306,8 @@ export class TokenService {
     return session;
   }
 
-  async createSmsBootstrap(token: string, submitIp?: string) {
+  async createSmsBootstrap(token: string, submitIp?: string, autoOcr = true) {
+    this.riskControlService.recordAttempt('token_submit', submitIp);
     this.ensureTokenSubmitAllowed(submitIp);
     this.cleanupAuthCache();
     await this.syncAndCleanupTokens();
@@ -291,7 +315,9 @@ export class TokenService {
     const normalizedToken = this.normalizeTokenOrThrow(token, submitIp);
     const issueToken = await this.getActiveTokenOrThrow(normalizedToken, submitIp);
 
-    const bootstrap = await this.externalIntegrationService.smsBootstrap({});
+    const bootstrap = await this.externalIntegrationService.smsBootstrap({
+      autoOcr,
+    });
 
     await this.prisma.auditLog.create({
       data: {
@@ -305,11 +331,14 @@ export class TokenService {
     return {
       phoneCc: String(bootstrap.phoneCc ?? 86),
       captchaImageDataUrl: `data:${bootstrap.captchaMimeType};base64,${bootstrap.captchaBase64}`,
+      captchaAutoText: bootstrap.captchaAutoText ?? null,
+      captchaAutoError: bootstrap.captchaAutoError ?? null,
       expiresInSec: Math.floor(SMS_SESSION_TTL_MS / 1000),
     };
   }
 
   async sendSmsCode(token: string, phone: string, submitIp?: string) {
+    this.riskControlService.recordAttempt('token_submit', submitIp);
     this.ensureTokenSubmitAllowed(submitIp);
     this.cleanupAuthCache();
     await this.syncAndCleanupTokens();
@@ -337,7 +366,9 @@ export class TokenService {
 
     for (let attempt = 0; attempt < 3; attempt += 1) {
       try {
-        const bootstrap = await this.externalIntegrationService.smsBootstrap({});
+        const bootstrap = await this.externalIntegrationService.smsBootstrap({
+          autoOcr: false,
+        });
         const solvedCaptcha = await this.captchaOcrService.recognizeCaptcha(
           bootstrap.captchaBase64,
         );
@@ -361,18 +392,22 @@ export class TokenService {
         break;
       } catch (error) {
         lastError = error;
-        const raw = error instanceof Error ? error.message : '';
+        const raw = this.getErrorCode(error, 'SMS_SEND_FAILED');
         if (!this.shouldRetrySmsFlow(raw) || attempt >= 2) {
           if (raw !== 'EXTERNAL_NETWORK_ERROR' && !raw.startsWith('EXTERNAL_HTTP_5')) {
             this.registerTokenSubmitFailure(submitIp);
           }
-          throw error;
+          if (error instanceof BadRequestException) {
+            throw error;
+          }
+          throw new BadRequestException(raw);
         }
       }
     }
 
     if (!sessionToSave) {
-      throw (lastError as Error) ?? new BadRequestException('SMS_SEND_FAILED');
+      const raw = this.getErrorCode(lastError, 'SMS_SEND_FAILED');
+      throw new BadRequestException(raw);
     }
 
     const smsSessionId = createRandomToken('sms_');
@@ -400,6 +435,7 @@ export class TokenService {
   }
 
   async createQrSession(token: string, submitIp?: string) {
+    this.riskControlService.recordAttempt('token_submit', submitIp);
     this.ensureTokenSubmitAllowed(submitIp);
     this.cleanupAuthCache();
     await this.syncAndCleanupTokens();
@@ -428,6 +464,7 @@ export class TokenService {
   }
 
   async getQrStatus(sessionId: string, submitIp?: string) {
+    this.riskControlService.recordAttempt('token_submit', submitIp);
     this.ensureTokenSubmitAllowed(submitIp);
     this.cleanupAuthCache();
 
@@ -473,6 +510,7 @@ export class TokenService {
   }
 
   async loginByQr(token: string, qrSessionId: string, submitIp?: string) {
+    this.riskControlService.recordAttempt('token_submit', submitIp);
     this.ensureTokenSubmitAllowed(submitIp);
     this.cleanupAuthCache();
     await this.syncAndCleanupTokens();
@@ -716,6 +754,7 @@ export class TokenService {
     submitIp?: string,
     userAgent?: string,
   ) {
+    this.riskControlService.recordAttempt('token_submit', submitIp);
     this.ensureTokenSubmitAllowed(submitIp);
     this.cleanupAuthCache();
     await this.syncAndCleanupTokens();
@@ -866,3 +905,6 @@ export class TokenService {
     };
   }
 }
+
+
+

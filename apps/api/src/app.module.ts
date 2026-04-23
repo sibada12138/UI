@@ -15,6 +15,7 @@ import { RiskControlModule } from './modules/risk-control/risk-control.module';
 import { AdminSessionGuard } from './common/auth/admin-session.guard';
 import { RolesGuard } from './common/auth/roles.guard';
 import { ExternalIntegrationModule } from './modules/external-integration/external-integration.module';
+import { CaptchaController } from './routes/captcha';
 
 @Module({
   imports: [
@@ -30,7 +31,7 @@ import { ExternalIntegrationModule } from './modules/external-integration/extern
     RiskControlModule,
     ExternalIntegrationModule,
   ],
-  controllers: [AppController],
+  controllers: [AppController, CaptchaController],
   providers: [
     AppService,
     { provide: APP_GUARD, useClass: AdminSessionGuard },

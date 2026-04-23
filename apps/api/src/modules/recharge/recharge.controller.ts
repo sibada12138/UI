@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, Query } from '@nestjs/common';
 import { RechargeService } from './recharge.service';
 import { UpdateRechargeStatusDto } from './dto/update-recharge-status.dto';
 import { GenerateRechargeLinkDto } from './dto/generate-recharge-link.dto';
@@ -16,6 +16,17 @@ export class RechargeController {
   @Get()
   list() {
     return this.rechargeService.listTasks();
+  }
+
+  @Get('notifications')
+  listNotifications(
+    @Query('since') since?: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.rechargeService.listTaskNotifications(
+      since,
+      Number(limit ?? 30),
+    );
   }
 
   @Get('accounts')

@@ -313,9 +313,20 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
           }
           window.dispatchEvent(new CustomEvent("admin:data-updated"));
         }
-      } catch {
+      } catch (error) {
+        const raw = error instanceof Error ? error.message : String(error);
+        if (
+          raw.includes('/api/admin/recharge/tasks/notifications') &&
+          raw.toLowerCase().includes('cannot get')
+        ) {
+          stopped = true;
+          logLayoutDebug("notification poll stopped", {
+            error: raw,
+          });
+          return;
+        }
         logLayoutDebug("notification poll failed", {
-          error: "request_failed",
+          error: raw || "request_failed",
         });
       }
     }
