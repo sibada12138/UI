@@ -239,7 +239,7 @@ build_service() {
   local service="$1"
   log "构建 ${service} 镜像..."
   if [ "$BUILDKIT" -eq 1 ]; then
-    DOCKER_BUILDKIT=1 compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" build --progress=plain "$service"
+    DOCKER_BUILDKIT=1 compose --progress plain -f "$COMPOSE_FILE" --env-file "$ENV_FILE" build "$service"
   else
     DOCKER_BUILDKIT=0 compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" build "$service"
   fi
