@@ -1,13 +1,12 @@
 "use client";
 
 import { FormEvent, Suspense, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import { apiRequest } from "@/lib/api";
-import { saveAdminProfile, saveAdminToken } from "@/lib/admin-auth";
+import { getAdminToken, saveAdminProfile, saveAdminToken } from "@/lib/admin-auth";
 import { toErrorMessage } from "@/lib/error-message";
 
 function AdminLoginPageContent() {
-  const router = useRouter();
   const searchParams = useSearchParams();
   const [username, setUsername] = useState("admin");
   const [password, setPassword] = useState("");
@@ -19,6 +18,11 @@ function AdminLoginPageContent() {
     event.preventDefault();
     setLoading(true);
     setMessage("");
+    console.info("[AUTH_DEBUG][login]", "submit start", {
+      username,
+      pathname: typeof window !== "undefined" ? window.location.pathname : "",
+      reason,
+    });
     try {
       const data = await apiRequest<{
         accessToken: string;
@@ -29,8 +33,22 @@ function AdminLoginPageContent() {
       });
       saveAdminToken(data.accessToken);
       saveAdminProfile(data.user);
-      router.push("/admin/dashboard");
+      const afterSaveToken = getAdminToken().trim();
+      console.info("[AUTH_DEBUG][login]", "submit success", {
+        userId: data.user.id,
+        username: data.user.username,
+        role: data.user.role,
+        receivedTokenLength: String(data.accessToken ?? "").length,
+        tokenSaved: Boolean(afterSaveToken),
+      });
+      if (typeof window !== "undefined") {
+        console.info("[AUTH_DEBUG][login]", "redirect to dashboard");
+        window.location.assign("/admin/dashboard");
+      }
     } catch (error) {
+      console.warn("[AUTH_DEBUG][login]", "submit failed", {
+        error: error instanceof Error ? error.message : String(error),
+      });
       setMessage(toErrorMessage(error, "登录失败，请稍后重试"));
     } finally {
       setLoading(false);

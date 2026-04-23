@@ -36,15 +36,45 @@ export type ApiOptions = {
   token?: string;
 };
 
+function maskToken(token: string) {
+  const value = String(token ?? '').trim();
+  if (!value) {
+    return '(empty)';
+  }
+  if (value.length <= 12) {
+    return `${value.slice(0, 2)}***${value.slice(-2)}`;
+  }
+  return `${value.slice(0, 6)}...${value.slice(-6)}`;
+}
+
+function logApiDebug(message: string, payload?: Record<string, unknown>) {
+  if (typeof window === 'undefined') {
+    return;
+  }
+  if (payload) {
+    console.info('[AUTH_DEBUG][api]', message, payload);
+    return;
+  }
+  console.info('[AUTH_DEBUG][api]', message);
+}
+
 export async function apiRequest<T>(path: string, options: ApiOptions = {}) {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
   };
   if (options.token) {
     headers.Authorization = `Bearer ${options.token}`;
+    headers["X-Admin-Token"] = options.token;
   }
 
   const requestUrl = `${resolveApiBase()}${path}`;
+  logApiDebug('request', {
+    path,
+    url: requestUrl,
+    method: options.method ?? 'GET',
+    hasToken: Boolean(options.token),
+    token: maskToken(options.token ?? ''),
+  });
   let response: Response;
   try {
     response = await fetch(requestUrl, {
@@ -53,7 +83,12 @@ export async function apiRequest<T>(path: string, options: ApiOptions = {}) {
       body: options.body ? JSON.stringify(options.body) : undefined,
       cache: 'no-store',
     });
-  } catch {
+  } catch (error) {
+    logApiDebug('network error', {
+      path,
+      url: requestUrl,
+      error: error instanceof Error ? error.message : String(error),
+    });
     throw new Error('NETWORK_ERROR');
   }
 
@@ -61,6 +96,17 @@ export async function apiRequest<T>(path: string, options: ApiOptions = {}) {
   const payload = contentType.includes('application/json')
     ? ((await response.json()) as T & { message?: string })
     : null;
+
+  logApiDebug('response', {
+    path,
+    url: requestUrl,
+    status: response.status,
+    ok: response.ok,
+    message:
+      payload && typeof payload === 'object' && 'message' in payload
+        ? String(payload.message)
+        : '',
+  });
 
   if (!response.ok) {
     const message =

@@ -8,6 +8,17 @@ import {
 } from '../../common/security/crypto.util';
 import { AdminRole } from '@prisma/client';
 
+function maskToken(token: string) {
+  const value = String(token ?? '').trim();
+  if (!value) {
+    return '(empty)';
+  }
+  if (value.length <= 12) {
+    return `${value.slice(0, 2)}***${value.slice(-2)}`;
+  }
+  return `${value.slice(0, 6)}...${value.slice(-6)}`;
+}
+
 @Injectable()
 export class AuthService {
   constructor(private readonly prisma: PrismaService) {}
@@ -30,16 +41,29 @@ export class AuthService {
   }
 
   async login(dto: AdminLoginDto, ip?: string, userAgent?: string) {
+    console.log('[AUTH_DEBUG][auth.service] login start', {
+      username: dto.username,
+      ip: ip ?? '',
+      hasUserAgent: Boolean(userAgent),
+    });
     await this.ensureDefaultAdmin();
     const admin = await this.prisma.admin.findUnique({
       where: { username: dto.username },
     });
     if (!admin || admin.status !== 'active') {
+      console.warn('[AUTH_DEBUG][auth.service] login reject', {
+        username: dto.username,
+        reason: 'ADMIN_NOT_FOUND',
+      });
       throw new UnauthorizedException('ADMIN_NOT_FOUND');
     }
 
     const valid = await argon2.verify(admin.passwordHash, dto.password);
     if (!valid) {
+      console.warn('[AUTH_DEBUG][auth.service] login reject', {
+        username: dto.username,
+        reason: 'PASSWORD_INVALID',
+      });
       throw new UnauthorizedException('PASSWORD_INVALID');
     }
 
@@ -54,6 +78,15 @@ export class AuthService {
         userAgent: userAgent?.slice(0, 255),
         expiresAt,
       },
+    });
+
+    console.log('[AUTH_DEBUG][auth.service] login success', {
+      adminId: admin.id,
+      username: admin.username,
+      role: admin.role,
+      sessionId: session.id,
+      expiresAt: expiresAt.toISOString(),
+      token: maskToken(rawToken),
     });
 
     return {
@@ -71,6 +104,9 @@ export class AuthService {
 
   async logout(rawToken: string) {
     const tokenHash = hashPlainText(rawToken);
+    console.log('[AUTH_DEBUG][auth.service] logout', {
+      token: maskToken(rawToken),
+    });
     await this.prisma.adminSession.deleteMany({ where: { tokenHash } });
     return { success: true };
   }
