@@ -49,7 +49,6 @@ docker compose -f infra/docker-compose.yml --env-file infra/.env up -d web
 cd /lishuai/rx/rx
 bash infra/update.sh
 ```
-说明：默认是 `auto` 分步模式，为避免卡死会拆成两次执行。
 说明：默认是单次执行内按顺序分步更新：
 - 先构建并启动 `api`（含 `redis`）
 - 再构建并启动 `web`
@@ -60,7 +59,7 @@ bash infra/update.sh
 # 不执行 git pull（仅构建并启动）
 bash infra/update.sh --no-pull
 
-# 仅更新 API（最稳，资源占用最低）
+# 仅更新 API
 bash infra/update.sh api
 
 # 仅更新 Web
@@ -82,11 +81,6 @@ bash infra/update.sh auto --retry=3 --sleep=5
 # 自动模式只重启（不构建）
 bash infra/update.sh auto --no-build
 
-# 只更新 API
-bash infra/update.sh api
-
-# 只更新 Web
-bash infra/update.sh web
 ```
 
 ## 3. 仅改端口时

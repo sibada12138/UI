@@ -12,10 +12,11 @@ RUN pnpm install --frozen-lockfile
 COPY . .
 
 ENV NEXT_TELEMETRY_DISABLED=1
-ENV NODE_OPTIONS=--max-old-space-size=1024
+ENV CI=1
+ENV NODE_OPTIONS=--max-old-space-size=768
 ENV SKIP_WEB_TYPECHECK=1
 
-RUN pnpm --filter web build
+RUN pnpm --filter web exec next build --webpack
 
 EXPOSE 3000
 
